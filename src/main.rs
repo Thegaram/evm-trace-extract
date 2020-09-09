@@ -8,8 +8,9 @@ mod transaction_info;
 
 use rocksdb::{Options, SliceTransform, DB};
 use stats::{BlockStats, TxPairStats};
+use std::collections::HashMap;
 use std::env;
-use transaction_info::TransactionInfo;
+use transaction_info::{Access, AccessMode, Target, TransactionInfo};
 
 fn tx_infos_from_db(db: &DB, block: u64) -> Vec<TransactionInfo> {
     use transaction_info::{parse_accesses, parse_tx_hash};
@@ -38,8 +39,6 @@ fn into_pairwise_iter<'a>(
 }
 
 fn extract_tx_stats<'a>(pair: (&'a TransactionInfo, &'a TransactionInfo)) -> TxPairStats<'a> {
-    use transaction_info::{Access, AccessMode, Target};
-
     let (tx_a, tx_b) = pair;
     let mut stats = TxPairStats::new(&tx_a.tx_hash, &tx_b.tx_hash);
 
@@ -109,7 +108,7 @@ fn extract_tx_stats<'a>(pair: (&'a TransactionInfo, &'a TransactionInfo)) -> TxP
     stats
 }
 
-fn print_block_stats(block: u64, tx_infos: Vec<TransactionInfo>, detailed: bool) -> i32 {
+fn print_block_pairwise_stats(block: u64, tx_infos: Vec<TransactionInfo>, detailed: bool) -> i32 {
     println!(
         "Checking conflicts in block #{} ({} txs)...",
         block,
@@ -146,13 +145,13 @@ fn print_block_stats(block: u64, tx_infos: Vec<TransactionInfo>, detailed: bool)
     block_stats.num_conflicting_pairs()
 }
 
-fn handle_blocks(db: &DB, blocks: impl Iterator<Item = u64>, detailed: bool) {
+fn print_pairwise_stats(db: &DB, blocks: impl Iterator<Item = u64>, detailed: bool) {
     let mut max_conflicts = 0;
     let mut max_conflicts_block = 0;
 
     for block in blocks {
         let tx_infos = tx_infos_from_db(&db, block);
-        let num = print_block_stats(block, tx_infos, detailed);
+        let num = print_block_pairwise_stats(block, tx_infos, detailed);
 
         if num > max_conflicts {
             max_conflicts = num;
@@ -187,7 +186,7 @@ fn print_block_stats_csv(block: u64, tx_infos: Vec<TransactionInfo>) {
     );
 }
 
-fn handle_blocks_csv(db: &DB, blocks: impl Iterator<Item = u64>) {
+fn print_csv(db: &DB, blocks: impl Iterator<Item = u64>) {
     // print header
     println!("block,conflicts,balance,storage");
 
@@ -198,12 +197,115 @@ fn handle_blocks_csv(db: &DB, blocks: impl Iterator<Item = u64>) {
     }
 }
 
+fn count_aborts(txs: Vec<TransactionInfo>, detailed: bool, ignore_balance: bool) -> i32 {
+    let mut balances = HashMap::new();
+    let mut storages = HashMap::new();
+
+    let mut num_aborts = 0;
+
+    for tx in txs {
+        let TransactionInfo { tx_hash, accesses } = tx;
+
+        let (reads, writes): (Vec<_>, Vec<_>) = accesses
+            .into_iter()
+            .partition(|a| a.mode == AccessMode::Read);
+
+        let mut aborted = false;
+
+        // we process reads first so that a tx does not "abort itsself"
+        for access in reads.into_iter().map(|a| a.target) {
+            match access {
+                Target::Balance(addr) => {
+                    if balances.contains_key(&addr) && !ignore_balance {
+                        aborted = true;
+
+                        if detailed {
+                            println!("    abort on read balance({:?})", addr);
+                            println!("        1st: {:?}", balances[&addr]);
+                            println!("        2nd: {:?}", tx_hash);
+                        }
+
+                        break;
+                    }
+                }
+                Target::Storage(addr, entry) => {
+                    let key = (addr, entry);
+
+                    if storages.contains_key(&key) {
+                        aborted = true;
+
+                        if detailed {
+                            println!("    abort on read storage({:?}, {:?})", key.0, key.1);
+                            println!("        1st: {:?}", storages[&key]);
+                            println!("        2nd: {:?}", tx_hash);
+                        }
+
+                        break;
+                    }
+                }
+            }
+        }
+
+        // then, we process writes, checking for aborts and enacting updates
+        for access in writes.into_iter().map(|a| a.target) {
+            match access {
+                Target::Balance(addr) => {
+                    if balances.contains_key(&addr) && !ignore_balance {
+                        aborted = true;
+
+                        if detailed {
+                            println!("    abort on write balance({:?})", addr);
+                            println!("        1st: {:?}", balances[&addr]);
+                            println!("        2nd: {:?}", tx_hash);
+                        }
+                    }
+
+                    balances.insert(addr, tx_hash.clone());
+                }
+                Target::Storage(addr, entry) => {
+                    let key = (addr, entry);
+
+                    if storages.contains_key(&key) {
+                        aborted = true;
+
+                        if detailed {
+                            println!("    abort on write storage({:?}, {:?})", key.0, key.1);
+                            println!("        1st: {:?}", storages[&key]);
+                            println!("        2nd: {:?}", tx_hash);
+                        }
+                    }
+
+                    storages.insert(key, tx_hash.clone());
+                }
+            }
+        }
+
+        if aborted {
+            num_aborts += 1;
+        }
+    }
+
+    num_aborts
+}
+
+fn print_aborts(db: &DB, blocks: impl Iterator<Item = u64>) {
+    for block in blocks {
+        let tx_infos = tx_infos_from_db(&db, block);
+
+        let num_aborts = count_aborts(
+            tx_infos, /* detailed = */ true, /* ignore_balance = */ true,
+        );
+
+        println!("Num aborts in block #{}: {}", block, num_aborts);
+    }
+}
+
 fn main() {
     // parse args
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 5 {
-        println!("Usage: evm-trace-extract [db-path:str] [from-block:int] [to-block:int] [mode:(normal|detailed|csv)]");
+        println!("Usage: evm-trace-extract [db-path:str] [from-block:int] [to-block:int] [mode:(normal|detailed|csv|aborts)]");
         return;
     }
 
@@ -243,11 +345,12 @@ fn main() {
 
     // process
     match mode {
-        "csv" => handle_blocks_csv(&db, from..=to),
-        "normal" => handle_blocks(&db, from..=to, false),
-        "detailed" => handle_blocks(&db, from..=to, true),
+        "csv" => print_csv(&db, from..=to),
+        "normal" => print_pairwise_stats(&db, from..=to, false),
+        "detailed" => print_pairwise_stats(&db, from..=to, true),
+        "aborts" => print_aborts(&db, from..=to),
         _ => {
-            println!("mode should be one of: normal, detailed, csv");
+            println!("mode should be one of: normal, detailed, csv, aborts");
             return;
         }
     }
