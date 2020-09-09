@@ -12,6 +12,24 @@ use std::collections::HashMap;
 use std::env;
 use transaction_info::{Access, AccessMode, Target, TransactionInfo};
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum OutputMode {
+    Normal,
+    Detailed,
+    Csv,
+}
+
+impl OutputMode {
+    fn from_str(raw: &str) -> OutputMode {
+        match raw {
+            "normal" => OutputMode::Normal,
+            "detailed" => OutputMode::Detailed,
+            "csv" => OutputMode::Csv,
+            x => panic!("Unknown OutputMode type: {}", x),
+        }
+    }
+}
+
 fn tx_infos_from_db(db: &DB, block: u64) -> Vec<TransactionInfo> {
     use transaction_info::{parse_accesses, parse_tx_hash};
 
@@ -108,96 +126,85 @@ fn extract_tx_stats<'a>(pair: (&'a TransactionInfo, &'a TransactionInfo)) -> TxP
     stats
 }
 
-fn print_block_pairwise_stats(block: u64, tx_infos: Vec<TransactionInfo>, detailed: bool) -> i32 {
-    println!(
-        "Checking conflicts in block #{} ({} txs)...",
-        block,
-        tx_infos.len(),
-    );
-
-    if tx_infos.len() == 0 {
-        println!("Empty block, no conflicts\n");
-        return 0;
-    }
-
-    if tx_infos.len() == 1 {
-        println!("Singleton block, no conflicts\n");
-        return 0;
-    }
-
+fn process_txs_pairwise(block: u64, tx_infos: Vec<TransactionInfo>, mode: OutputMode) {
+    // collect pairwise stats
     let mut block_stats = BlockStats::new(block);
 
-    for stats in into_pairwise_iter(&tx_infos).map(extract_tx_stats) {
-        block_stats.accumulate(&stats);
+    let tx_stats: Vec<_> = into_pairwise_iter(&tx_infos)
+        .map(extract_tx_stats)
+        .map(|stats| {
+            block_stats.accumulate(&stats);
+            stats
+        })
+        .collect();
 
-        if detailed && stats.has_conflict() {
-            println!("    {:?}", stats);
+    // print stats
+    match mode {
+        OutputMode::Normal => {
+            println!(
+                "Checking conflicts in block #{} ({} txs)...",
+                block,
+                tx_infos.len(),
+            );
+
+            if !block_stats.has_conflicts() {
+                println!("No conflicts in block\n");
+                return;
+            }
+
+            println!("{:?}\n", block_stats);
+        }
+        OutputMode::Detailed => {
+            println!(
+                "Checking conflicts in block #{} ({} txs)...",
+                block,
+                tx_infos.len(),
+            );
+
+            if !block_stats.has_conflicts() {
+                println!("No conflicts in block\n");
+                return;
+            }
+
+            for stats in tx_stats {
+                if stats.has_conflict() {
+                    println!("    {:?}", stats);
+                }
+            }
+
+            println!("{:?}\n", block_stats);
+        }
+        OutputMode::Csv => {
+            println!(
+                "{},{},{},{}",
+                block,
+                block_stats.num_conflicting_pairs(),
+                block_stats.conflicting_pairs_balance,
+                block_stats.conflicting_pairs_storage
+            );
         }
     }
-
-    if !block_stats.has_conflicts() {
-        println!("No conflicts in block\n");
-        return 0;
-    }
-
-    println!("{:?}\n", block_stats);
-
-    block_stats.num_conflicting_pairs()
 }
 
-fn print_pairwise_stats(db: &DB, blocks: impl Iterator<Item = u64>, detailed: bool) {
-    let mut max_conflicts = 0;
-    let mut max_conflicts_block = 0;
+fn process_pairwise(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode) {
+    // print csv header if necessary
+    if mode == OutputMode::Csv {
+        println!("block,conflicts,balance,storage");
+    }
 
+    // process blocks
     for block in blocks {
         let tx_infos = tx_infos_from_db(&db, block);
-        let num = print_block_pairwise_stats(block, tx_infos, detailed);
-
-        if num > max_conflicts {
-            max_conflicts = num;
-            max_conflicts_block = block;
-        }
-    }
-
-    println!(
-        "Block with most conflicts: #{} ({})",
-        max_conflicts_block, max_conflicts
-    );
-}
-
-fn print_block_stats_csv(block: u64, tx_infos: Vec<TransactionInfo>) {
-    if tx_infos.len() == 0 || tx_infos.len() == 1 {
-        println!("{},0,0,0", block);
-        return;
-    }
-
-    let mut block_stats = BlockStats::new(block);
-
-    for stats in into_pairwise_iter(&tx_infos).map(extract_tx_stats) {
-        block_stats.accumulate(&stats);
-    }
-
-    println!(
-        "{},{},{},{}",
-        block,
-        block_stats.num_conflicting_pairs(),
-        block_stats.conflicting_pairs_balance,
-        block_stats.conflicting_pairs_storage
-    );
-}
-
-fn print_csv(db: &DB, blocks: impl Iterator<Item = u64>) {
-    // print header
-    println!("block,conflicts,balance,storage");
-
-    // print for each block
-    for block in blocks {
-        let tx_infos = tx_infos_from_db(&db, block);
-        print_block_stats_csv(block, tx_infos);
+        process_txs_pairwise(block, tx_infos, mode);
     }
 }
 
-fn count_aborts(txs: Vec<TransactionInfo>, detailed: bool, ignore_balance: bool) -> i32 {
+fn process_block_aborts(
+    block: u64,
+    txs: Vec<TransactionInfo>,
+    mode: OutputMode,
+    ignore_balance: bool,
+) {
     let mut balances = HashMap::new();
     let mut storages = HashMap::new();
 
@@ -219,7 +226,7 @@ fn count_aborts(txs: Vec<TransactionInfo>, detailed: bool, ignore_balance: bool)
                     if balances.contains_key(&addr) && !ignore_balance {
                         aborted = true;
 
-                        if detailed {
+                        if mode == OutputMode::Detailed {
                             println!("    abort on read balance({:?})", addr);
                             println!("        1st: {:?}", balances[&addr]);
                             println!("        2nd: {:?}", tx_hash);
@@ -234,7 +241,7 @@ fn count_aborts(txs: Vec<TransactionInfo>, detailed: bool, ignore_balance: bool)
                     if storages.contains_key(&key) {
                         aborted = true;
 
-                        if detailed {
+                        if mode == OutputMode::Detailed {
                             println!("    abort on read storage({:?}, {:?})", key.0, key.1);
                             println!("        1st: {:?}", storages[&key]);
                             println!("        2nd: {:?}", tx_hash);
@@ -253,7 +260,7 @@ fn count_aborts(txs: Vec<TransactionInfo>, detailed: bool, ignore_balance: bool)
                     if balances.contains_key(&addr) && !ignore_balance {
                         aborted = true;
 
-                        if detailed {
+                        if mode == OutputMode::Detailed {
                             println!("    abort on write balance({:?})", addr);
                             println!("        1st: {:?}", balances[&addr]);
                             println!("        2nd: {:?}", tx_hash);
@@ -268,7 +275,7 @@ fn count_aborts(txs: Vec<TransactionInfo>, detailed: bool, ignore_balance: bool)
                     if storages.contains_key(&key) {
                         aborted = true;
 
-                        if detailed {
+                        if mode == OutputMode::Detailed {
                             println!("    abort on write storage({:?}, {:?})", key.0, key.1);
                             println!("        1st: {:?}", storages[&key]);
                             println!("        2nd: {:?}", tx_hash);
@@ -285,18 +292,25 @@ fn count_aborts(txs: Vec<TransactionInfo>, detailed: bool, ignore_balance: bool)
         }
     }
 
-    num_aborts
+    match mode {
+        OutputMode::Csv => {
+            println!("{},{}", block, num_aborts);
+        }
+        OutputMode::Normal | OutputMode::Detailed => {
+            println!("Num aborts in block #{}: {}", block, num_aborts);
+        }
+    }
 }
 
-fn print_aborts(db: &DB, blocks: impl Iterator<Item = u64>) {
+fn process_aborts(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode) {
+    // print csv header if necessary
+    if mode == OutputMode::Csv {
+        println!("block,aborts");
+    }
+
     for block in blocks {
         let tx_infos = tx_infos_from_db(&db, block);
-
-        let num_aborts = count_aborts(
-            tx_infos, /* detailed = */ true, /* ignore_balance = */ true,
-        );
-
-        println!("Num aborts in block #{}: {}", block, num_aborts);
+        process_block_aborts(block, tx_infos, mode, /* ignore_balance = */ true);
     }
 }
 
@@ -304,8 +318,8 @@ fn main() {
     // parse args
     let args: Vec<String> = env::args().collect();
 
-    if args.len() != 5 {
-        println!("Usage: evm-trace-extract [db-path:str] [from-block:int] [to-block:int] [mode:(normal|detailed|csv|aborts)]");
+    if args.len() != 6 {
+        println!("Usage: evm-trace-extract [db-path:str] [from-block:int] [to-block:int] [mode:(pairwise|aborts)] [output:normal|detailed|csv]");
         return;
     }
 
@@ -317,6 +331,7 @@ fn main() {
 
     let to = args[3].parse::<u64>().expect("to-block should be a number");
     let mode = &args[4][..];
+    let output = OutputMode::from_str(&args[5][..]);
 
     // open db
     let prefix_extractor = SliceTransform::create_fixed_prefix(8);
@@ -345,12 +360,10 @@ fn main() {
 
     // process
     match mode {
-        "csv" => print_csv(&db, from..=to),
-        "normal" => print_pairwise_stats(&db, from..=to, false),
-        "detailed" => print_pairwise_stats(&db, from..=to, true),
-        "aborts" => print_aborts(&db, from..=to),
+        "pairwise" => process_pairwise(&db, from..=to, output),
+        "aborts" => process_aborts(&db, from..=to, output),
         _ => {
-            println!("mode should be one of: normal, detailed, csv, aborts");
+            println!("mode should be one of: pairwise, aborts");
             return;
         }
     }
