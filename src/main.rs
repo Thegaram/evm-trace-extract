@@ -130,46 +130,20 @@ fn process_txs_pairwise(block: u64, tx_infos: Vec<TransactionInfo>, mode: Output
     // collect pairwise stats
     let mut block_stats = BlockStats::new(block);
 
-    let tx_stats: Vec<_> = into_pairwise_iter(&tx_infos)
-        .map(extract_tx_stats)
-        .map(|stats| {
-            block_stats.accumulate(&stats);
-            stats
-        })
-        .collect();
+    for stats in into_pairwise_iter(&tx_infos).map(extract_tx_stats) {
+        block_stats.accumulate(&stats);
+
+        if mode == OutputMode::Detailed && stats.has_conflict() {
+            println!("    {:?}", stats);
+        }
+    }
 
     // print stats
     match mode {
-        OutputMode::Normal => {
-            println!(
-                "Checking conflicts in block #{} ({} txs)...",
-                block,
-                tx_infos.len(),
-            );
-
+        OutputMode::Normal | OutputMode::Detailed => {
             if !block_stats.has_conflicts() {
                 println!("No conflicts in block\n");
                 return;
-            }
-
-            println!("{:?}\n", block_stats);
-        }
-        OutputMode::Detailed => {
-            println!(
-                "Checking conflicts in block #{} ({} txs)...",
-                block,
-                tx_infos.len(),
-            );
-
-            if !block_stats.has_conflicts() {
-                println!("No conflicts in block\n");
-                return;
-            }
-
-            for stats in tx_stats {
-                if stats.has_conflict() {
-                    println!("    {:?}", stats);
-                }
             }
 
             println!("{:?}\n", block_stats);
@@ -195,6 +169,15 @@ fn process_pairwise(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode
     // process blocks
     for block in blocks {
         let tx_infos = tx_infos_from_db(&db, block);
+
+        if matches!(mode, OutputMode::Normal | OutputMode::Detailed) {
+            println!(
+                "Checking pairwise conflicts in block #{} ({} txs)...",
+                block,
+                tx_infos.len(),
+            );
+        }
+
         process_txs_pairwise(block, tx_infos, mode);
     }
 }
@@ -293,11 +276,11 @@ fn process_block_aborts(
     }
 
     match mode {
+        OutputMode::Normal | OutputMode::Detailed => {
+            println!("Num aborts in block #{}: {}\n", block, num_aborts);
+        }
         OutputMode::Csv => {
             println!("{},{}", block, num_aborts);
-        }
-        OutputMode::Normal | OutputMode::Detailed => {
-            println!("Num aborts in block #{}: {}", block, num_aborts);
         }
     }
 }
@@ -310,6 +293,15 @@ fn process_aborts(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode) 
 
     for block in blocks {
         let tx_infos = tx_infos_from_db(&db, block);
+
+        if matches!(mode, OutputMode::Normal | OutputMode::Detailed) {
+            println!(
+                "Checking aborts in block #{} ({} txs)...",
+                block,
+                tx_infos.len(),
+            );
+        }
+
         process_block_aborts(block, tx_infos, mode, /* ignore_balance = */ true);
     }
 }
@@ -319,7 +311,7 @@ fn main() {
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 6 {
-        println!("Usage: evm-trace-extract [db-path:str] [from-block:int] [to-block:int] [mode:(pairwise|aborts)] [output:normal|detailed|csv]");
+        println!("Usage: evm-trace-extract [db-path:str] [from-block:int] [to-block:int] [mode:pairwise|aborts] [output:normal|detailed|csv]");
         return;
     }
 
