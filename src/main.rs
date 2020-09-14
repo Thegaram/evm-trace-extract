@@ -319,7 +319,7 @@ fn process_aborts(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode) 
     }
 
     let mut counts = abort_counts.into_iter().collect::<Vec<_>>();
-    counts.sort_by(|&(_, a), &(_, b)| b.cmp(&a).reverse());
+    counts.sort_by(|&(_, a), &(_, b)| a.cmp(&b).reverse());
 
     for ii in 0..20 {
         if ii >= counts.len() {
