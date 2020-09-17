@@ -1,7 +1,8 @@
-extern crate regex;
-extern crate rocksdb;
 #[macro_use]
 extern crate lazy_static;
+extern crate regex;
+extern crate rocksdb;
+extern crate web3;
 
 mod stats;
 mod transaction_info;
@@ -11,6 +12,7 @@ use stats::{BlockStats, TxPairStats};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use transaction_info::{Access, AccessMode, Target, TransactionInfo};
+use web3::{transports, types::Transaction, types::TransactionId, types::U256, Web3};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum OutputMode {
@@ -184,12 +186,13 @@ fn process_pairwise(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode
     }
 }
 
-fn process_block_aborts(
+async fn process_block_aborts(
+    web3: &Web3<transports::Http>,
     block: u64,
     txs: Vec<TransactionInfo>,
     mode: OutputMode,
     ignore_balance: bool,
-    abort_counts: &mut HashMap<String, u64>,
+    abort_stats: &mut HashMap<String, U256>,
     filter_addr: Option<String>,
 ) {
     let mut balances = HashMap::new();
@@ -285,10 +288,18 @@ fn process_block_aborts(
 
         if tx_aborted {
             num_aborted_txs_in_block += 1;
-        }
 
-        for addr in tx_aborted_by {
-            *abort_counts.entry(addr).or_insert(0) += 1;
+            let gas = retrieve_gas(web3, &tx_hash[..])
+                .await
+                .expect(&format!("Unable to retrieve gas (1) {}", tx_hash)[..])
+                .expect(&format!("Unable to retrieve gas (2) {}", tx_hash)[..]);
+
+            for addr in tx_aborted_by {
+                abort_stats
+                    .entry(addr)
+                    .or_insert(0.into())
+                    .overflowing_add(gas); // TODO
+            }
         }
     }
 
@@ -305,13 +316,18 @@ fn process_block_aborts(
     }
 }
 
-fn process_aborts(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode) {
+async fn process_aborts(
+    db: &DB,
+    web3: &Web3<transports::Http>,
+    blocks: impl Iterator<Item = u64>,
+    mode: OutputMode,
+) {
     // print csv header if necessary
     if mode == OutputMode::Csv {
         println!("block,aborts");
     }
 
-    let mut abort_counts = HashMap::new();
+    let mut abort_stats = HashMap::new();
 
     for block in blocks {
         let tx_infos = tx_infos_from_db(&db, block);
@@ -325,16 +341,18 @@ fn process_aborts(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode) 
         }
 
         process_block_aborts(
+            web3,
             block,
             tx_infos,
             mode,
             /* ignore_balance = */ true,
-            &mut abort_counts,
+            &mut abort_stats,
             /* filter_addr = */ None,
-        );
+        )
+        .await;
     }
 
-    // let mut counts = abort_counts.into_iter().collect::<Vec<_>>();
+    // let mut counts = abort_stats.into_iter().collect::<Vec<_>>();
     // counts.sort_by(|&(_, a), &(_, b)| a.cmp(&b).reverse());
 
     // for ii in 0..20 {
@@ -346,13 +364,38 @@ fn process_aborts(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode) 
     // }
 }
 
-fn main() {
+async fn retrieve_transaction(
+    web3: &Web3<transports::Http>,
+    tx_hash: &str,
+) -> Result<Option<Transaction>, web3::Error> {
+    let parsed = tx_hash
+        .trim_start_matches("0x")
+        .parse()
+        .expect("Unable to parse tx-hash");
+
+    let tx_id = TransactionId::Hash(parsed);
+
+    web3.eth().transaction(tx_id).await
+}
+
+async fn retrieve_gas(
+    web3: &Web3<transports::Http>,
+    tx_hash: &str,
+) -> Result<Option<U256>, web3::Error> {
+    Ok(retrieve_transaction(web3, tx_hash).await?.map(|tx| tx.gas))
+}
+
+#[tokio::main]
+async fn main() -> web3::Result<()> {
+    let transport = web3::transports::Http::new("http://localhost:8545")?;
+    let web3 = web3::Web3::new(transport);
+
     // parse args
     let args: Vec<String> = env::args().collect();
 
     if args.len() != 6 {
         println!("Usage: evm-trace-extract [db-path:str] [from-block:int] [to-block:int] [mode:pairwise|aborts] [output:normal|detailed|csv]");
-        return;
+        return Ok(());
     }
 
     let path = &args[1][..];
@@ -387,16 +430,18 @@ fn main() {
 
     if to > latest {
         println!("Latest header in trace db: #{}", latest);
-        return;
+        return Ok(());
     }
 
     // process
     match mode {
         "pairwise" => process_pairwise(&db, from..=to, output),
-        "aborts" => process_aborts(&db, from..=to, output),
+        "aborts" => process_aborts(&db, &web3, from..=to, output).await,
         _ => {
             println!("mode should be one of: pairwise, aborts");
-            return;
+            return Ok(());
         }
     }
+
+    Ok(())
 }
