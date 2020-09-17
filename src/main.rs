@@ -36,6 +36,8 @@ fn tx_infos_from_db(db: &DB, block: u64) -> Vec<TransactionInfo> {
     let prefix = format!("{:0>8}", block);
     let iter = db.prefix_iterator(prefix.as_bytes());
 
+    iter.status().unwrap();
+
     iter.map(|(key, value)| {
         let key = std::str::from_utf8(&*key).expect("key read is valid string");
         let value = std::str::from_utf8(&*value).expect("value read is valid string");
@@ -318,16 +320,16 @@ fn process_aborts(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode) 
         );
     }
 
-    let mut counts = abort_counts.into_iter().collect::<Vec<_>>();
-    counts.sort_by(|&(_, a), &(_, b)| a.cmp(&b).reverse());
+    // let mut counts = abort_counts.into_iter().collect::<Vec<_>>();
+    // counts.sort_by(|&(_, a), &(_, b)| a.cmp(&b).reverse());
 
-    for ii in 0..20 {
-        if ii >= counts.len() {
-            break;
-        }
+    // for ii in 0..20 {
+    //     if ii >= counts.len() {
+    //         break;
+    //     }
 
-        println!("#{}: {} ({} aborts)", ii, counts[ii].0, counts[ii].1);
-    }
+    //     println!("#{}: {} ({} aborts)", ii, counts[ii].0, counts[ii].1);
+    // }
 }
 
 fn main() {
