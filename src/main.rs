@@ -190,6 +190,7 @@ fn process_block_aborts(
     mode: OutputMode,
     ignore_balance: bool,
     abort_counts: &mut HashMap<String, u64>,
+    filter_addr: Option<String>,
 ) {
     let mut balances = HashMap::new();
     let mut storages = HashMap::new();
@@ -209,6 +210,13 @@ fn process_block_aborts(
         for access in reads.into_iter().map(|a| a.target) {
             match access {
                 Target::Balance(addr) => {
+                    // skip if we filter for a different address
+                    if let Some(ref a) = filter_addr {
+                        if &addr != a {
+                            continue;
+                        }
+                    }
+
                     if balances.contains_key(&addr) && !ignore_balance {
                         aborted = true;
                         *abort_counts.entry(addr.clone()).or_insert(0) += 1;
@@ -223,6 +231,13 @@ fn process_block_aborts(
                     }
                 }
                 Target::Storage(addr, entry) => {
+                    // skip if we filter for a different address
+                    if let Some(ref a) = filter_addr {
+                        if &addr != a {
+                            continue;
+                        }
+                    }
+
                     let key = (addr, entry);
 
                     if storages.contains_key(&key) {
@@ -245,6 +260,13 @@ fn process_block_aborts(
         for access in writes.into_iter().map(|a| a.target) {
             match access {
                 Target::Balance(addr) => {
+                    // skip if we filter for a different address
+                    if let Some(ref a) = filter_addr {
+                        if &addr != a {
+                            continue;
+                        }
+                    }
+
                     if balances.contains_key(&addr) && !ignore_balance {
                         aborted = true;
                         *abort_counts.entry(addr.clone()).or_insert(0) += 1;
@@ -259,6 +281,13 @@ fn process_block_aborts(
                     balances.insert(addr, tx_hash.clone());
                 }
                 Target::Storage(addr, entry) => {
+                    // skip if we filter for a different address
+                    if let Some(ref a) = filter_addr {
+                        if &addr != a {
+                            continue;
+                        }
+                    }
+
                     let key = (addr, entry);
 
                     if storages.contains_key(&key) {
@@ -317,6 +346,7 @@ fn process_aborts(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode) 
             mode,
             /* ignore_balance = */ true,
             &mut abort_counts,
+            /* filter_addr = */ None,
         );
     }
 
