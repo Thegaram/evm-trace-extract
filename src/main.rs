@@ -295,10 +295,8 @@ async fn process_block_aborts(
                 .expect(&format!("Unable to retrieve gas (2) {}", tx_hash)[..]);
 
             for addr in tx_aborted_by {
-                abort_stats
-                    .entry(addr)
-                    .or_insert(0.into())
-                    .overflowing_add(gas); // TODO
+                let entry = abort_stats.entry(addr).or_insert(0.into());
+                *entry = entry.saturating_add(gas);
             }
         }
     }
