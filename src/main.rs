@@ -4,15 +4,19 @@ extern crate regex;
 extern crate rocksdb;
 extern crate web3;
 
+mod rpc;
 mod stats;
 mod transaction_info;
 
 use rocksdb::{Options, SliceTransform, DB};
+use rpc::{retrieve_gas, retrieve_gas_parity};
 use stats::{BlockStats, TxPairStats};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use transaction_info::{Access, AccessMode, Target, TransactionInfo};
-use web3::{transports, types::TransactionReceipt, types::U256, Web3};
+use web3::{transports, types::U256, Web3 as Web3Generic};
+
+type Web3 = Web3Generic<transports::Http>;
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum OutputMode {
@@ -187,7 +191,7 @@ fn process_pairwise(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode
 }
 
 async fn process_block_aborts(
-    web3: &Web3<transports::Http>,
+    web3: &Web3,
     block: u64,
     txs: Vec<TransactionInfo>,
     mode: OutputMode,
@@ -289,6 +293,7 @@ async fn process_block_aborts(
         if tx_aborted {
             num_aborted_txs_in_block += 1;
 
+            // TODO: get gas for the whole block?
             let gas = retrieve_gas(web3, &tx_hash[..])
                 .await
                 .expect(&format!("Unable to retrieve gas (1) {}", tx_hash)[..])
@@ -315,7 +320,7 @@ async fn process_block_aborts(
 }
 
 async fn process_block_aborts2(
-    web3: &Web3<transports::Http>,
+    web3: &Web3,
     block: u64,
     txs: Vec<TransactionInfo>,
     mode: OutputMode,
@@ -330,13 +335,15 @@ async fn process_block_aborts2(
 
     let mut tx_aborted = false;
 
-    for tx in txs {
-        let TransactionInfo { tx_hash, accesses } = tx;
+    // retrieve all gas costs  before processing block
+    let tx_gas = retrieve_gas_parity(web3, block)
+        // let gas = retrieve_gas_parallel(web3, txs.iter().map(|tx| tx.tx_hash.clone()))
+        .await
+        .expect(&format!("Error while collecting gas for block #{}", block)[..]);
 
-        let gas = retrieve_gas(web3, &tx_hash[..])
-            .await
-            .expect(&format!("Unable to retrieve gas (1) {}", tx_hash)[..])
-            .expect(&format!("Unable to retrieve gas (2) {}", tx_hash)[..]);
+    for (id, tx) in txs.into_iter().enumerate() {
+        let TransactionInfo { tx_hash, accesses } = tx;
+        let gas = tx_gas[id];
 
         serial_gas_cost = serial_gas_cost.saturating_add(gas);
 
@@ -408,12 +415,73 @@ async fn process_block_aborts2(
     }
 }
 
-async fn process_aborts(
-    db: &DB,
-    web3: &Web3<transports::Http>,
-    blocks: impl Iterator<Item = u64>,
-    mode: OutputMode,
-) {
+async fn process_block_aborts3(web3: &'static Web3, block: u64, txs: Vec<TransactionInfo>) -> U256 {
+    // retrieve all gas costs  before processing block
+    let gas = retrieve_gas_parity(web3, block)
+        // let gas = retrieve_gas_parallel(web3, txs.iter().map(|tx| tx.tx_hash.clone()))
+        .await
+        .expect(&format!("Error while collecting gas for block #{}", block)[..]);
+
+    const BATCH_SIZE: usize = 4;
+
+    let mut next_to_process = std::cmp::min(BATCH_SIZE, txs.len()); // 4
+    let mut batch = (0..next_to_process).collect::<Vec<_>>(); // [0, 1, 2, 3]
+    let mut gas_cost = U256::from(0);
+
+    loop {
+        // exit condition: nothing left to process
+        if batch.is_empty() {
+            assert!(next_to_process == txs.len());
+            break;
+        }
+
+        // cost of batch is the maximum gas cost in this batch
+        let cost_of_batch = batch
+            .iter()
+            .map(|id| gas[*id])
+            .max()
+            .expect("batch not empty");
+
+        gas_cost += cost_of_batch;
+
+        // process batch
+        let mut storages = HashMap::new(); // start with clear storage (!)
+        let mut aborted: Vec<usize> = vec![];
+
+        for id in batch {
+            let TransactionInfo { tx_hash, accesses } = &txs[id];
+
+            // detect aborts
+            for acc in accesses {
+                // ignore balance for now
+                if let Target::Storage(addr, entry) = &acc.target {
+                    if storages.contains_key(&(addr, entry)) {
+                        aborted.push(id);
+                    }
+                }
+            }
+
+            // enact updates
+            for acc in accesses {
+                // ignore balance for now
+                if let Target::Storage(addr, entry) = &acc.target {
+                    storages.insert((addr, entry), tx_hash.clone());
+                }
+            }
+        }
+
+        while aborted.len() < BATCH_SIZE && next_to_process < txs.len() {
+            aborted.push(next_to_process);
+            next_to_process += 1;
+        }
+
+        batch = aborted;
+    }
+
+    gas_cost
+}
+
+async fn process_aborts(db: &DB, web3: &Web3, blocks: impl Iterator<Item = u64>, mode: OutputMode) {
     // print csv header if necessary
     if mode == OutputMode::Csv {
         println!("block,aborts");
@@ -458,7 +526,7 @@ async fn process_aborts(
 
 async fn process_aborts2(
     db: &DB,
-    web3: &Web3<transports::Http>,
+    web3: &Web3,
     blocks: impl Iterator<Item = u64>,
     mode: OutputMode,
 ) {
@@ -485,30 +553,12 @@ async fn process_aborts2(
     }
 }
 
-// TODO use receipt instead
-async fn retrieve_transaction_receipt(
-    web3: &Web3<transports::Http>,
-    tx_hash: &str,
-) -> Result<Option<TransactionReceipt>, web3::Error> {
-    let parsed = tx_hash
-        .trim_start_matches("0x")
-        .parse()
-        .expect("Unable to parse tx-hash");
-
-    web3.eth().transaction_receipt(parsed).await
-}
-
-async fn retrieve_gas(
-    web3: &Web3<transports::Http>,
-    tx_hash: &str,
-) -> Result<Option<U256>, web3::Error> {
-    Ok(retrieve_transaction_receipt(web3, tx_hash).await?.and_then(|tx| tx.gas_used))
-}
-
 #[tokio::main]
 async fn main() -> web3::Result<()> {
     // let transport = web3::transports::Http::new("http://localhost:8545")?;
-    let transport = web3::transports::Http::new("https://mainnet.infura.io/v3/c15ab95c12d441d19702cb4a0d1313e7")?;
+    let transport = web3::transports::Http::new(
+        "https://mainnet.infura.io/v3/c15ab95c12d441d19702cb4a0d1313e7",
+    )?;
     let web3 = web3::Web3::new(transport);
 
     // parse args

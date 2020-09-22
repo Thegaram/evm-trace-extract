@@ -320,9 +320,11 @@ dependencies = [
 name = "evm-trace-extract"
 version = "0.1.0"
 dependencies = [
+ "futures 0.3.5",
  "lazy_static",
  "regex",
  "rocksdb",
+ "serde_json",
  "tokio",
  "web3",
 ]

@@ -5,9 +5,10 @@ authors = ["Thegaram <th307q@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+futures = "0.3.5"
 lazy_static = "1.4.0"
 regex = "1"
 rocksdb = "0.15.0"
+serde_json = "1.0.57"
 tokio = "0.2.22"
-# tokio = { version = "0.2.22", features = ["macros", "tcp"] }
 web3 = { git = "https://github.com/tomusdrw/rust-web3" }
