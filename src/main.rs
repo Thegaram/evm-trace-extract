@@ -12,7 +12,7 @@ use stats::{BlockStats, TxPairStats};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use transaction_info::{Access, AccessMode, Target, TransactionInfo};
-use web3::{transports, types::Transaction, types::TransactionId, types::U256, Web3};
+use web3::{transports, types::TransactionReceipt, types::U256, Web3};
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum OutputMode {
@@ -314,6 +314,100 @@ async fn process_block_aborts(
     }
 }
 
+async fn process_block_aborts2(
+    web3: &Web3<transports::Http>,
+    block: u64,
+    txs: Vec<TransactionInfo>,
+    mode: OutputMode,
+    ignore_balance: bool,
+) {
+    let mut balances = HashMap::new();
+    let mut storages = HashMap::new();
+
+    let mut serial_gas_cost = U256::from(0);
+    let mut parallel_gas_cost = U256::from(0);
+    let mut max_gas_cost_of_parallel_txs = U256::from(0);
+
+    let mut tx_aborted = false;
+
+    for tx in txs {
+        let TransactionInfo { tx_hash, accesses } = tx;
+
+        let gas = retrieve_gas(web3, &tx_hash[..])
+            .await
+            .expect(&format!("Unable to retrieve gas (1) {}", tx_hash)[..])
+            .expect(&format!("Unable to retrieve gas (2) {}", tx_hash)[..]);
+
+        serial_gas_cost = serial_gas_cost.saturating_add(gas);
+
+        // go through accesses without enacting the changes,
+        // just checking conflicts
+        for access in &accesses {
+            match &access.target {
+                Target::Balance(addr) => {
+                    // ignore balance conflicts
+                    if ignore_balance {
+                        continue;
+                    }
+
+                    // no conflict
+                    if !balances.contains_key(addr) {
+                        continue;
+                    }
+
+                    tx_aborted = true;
+                    break;
+                }
+                Target::Storage(addr, entry) => {
+                    let key = (addr.clone(), entry.clone());
+
+                    // no conflict
+                    if !storages.contains_key(&key) {
+                        continue;
+                    }
+
+                    tx_aborted = true;
+                    break;
+                }
+            }
+        }
+
+        // enact changes
+        for access in accesses.into_iter().filter(|a| a.mode == AccessMode::Write) {
+            match access.target {
+                Target::Balance(addr) => {
+                    balances.insert(addr, tx_hash.clone());
+                }
+                Target::Storage(addr, entry) => {
+                    storages.insert((addr, entry), tx_hash.clone());
+                }
+            }
+        }
+
+        if tx_aborted {
+            parallel_gas_cost = parallel_gas_cost.saturating_add(gas);
+        } else {
+            if gas > max_gas_cost_of_parallel_txs {
+                max_gas_cost_of_parallel_txs = gas;
+            }
+        }
+    }
+
+    parallel_gas_cost = parallel_gas_cost.saturating_add(max_gas_cost_of_parallel_txs);
+
+    match mode {
+        OutputMode::Normal | OutputMode::Detailed => {
+            println!(
+                "Gas cost of block #{}: {} --> {}\n",
+                block, serial_gas_cost, parallel_gas_cost,
+            );
+        }
+        OutputMode::Csv => {
+            println!("{},{},{}", block, serial_gas_cost, parallel_gas_cost);
+        }
+    }
+}
+
 async fn process_aborts(
     db: &DB,
     web3: &Web3<transports::Http>,
@@ -362,30 +456,59 @@ async fn process_aborts(
     // }
 }
 
-async fn retrieve_transaction(
+async fn process_aborts2(
+    db: &DB,
+    web3: &Web3<transports::Http>,
+    blocks: impl Iterator<Item = u64>,
+    mode: OutputMode,
+) {
+    // print csv header if necessary
+    if mode == OutputMode::Csv {
+        println!("block,serial_gas_cost,parallel_gas_cost");
+    }
+
+    for block in blocks {
+        let tx_infos = tx_infos_from_db(&db, block);
+
+        if matches!(mode, OutputMode::Normal | OutputMode::Detailed) {
+            println!(
+                "Checking aborts in block #{} ({} txs)...",
+                block,
+                tx_infos.len(),
+            );
+        }
+
+        process_block_aborts2(
+            web3, block, tx_infos, mode, /* ignore_balance = */ true,
+        )
+        .await;
+    }
+}
+
+// TODO use receipt instead
+async fn retrieve_transaction_receipt(
     web3: &Web3<transports::Http>,
     tx_hash: &str,
-) -> Result<Option<Transaction>, web3::Error> {
+) -> Result<Option<TransactionReceipt>, web3::Error> {
     let parsed = tx_hash
         .trim_start_matches("0x")
         .parse()
         .expect("Unable to parse tx-hash");
 
-    let tx_id = TransactionId::Hash(parsed);
-
-    web3.eth().transaction(tx_id).await
+    web3.eth().transaction_receipt(parsed).await
 }
 
 async fn retrieve_gas(
     web3: &Web3<transports::Http>,
     tx_hash: &str,
 ) -> Result<Option<U256>, web3::Error> {
-    Ok(retrieve_transaction(web3, tx_hash).await?.map(|tx| tx.gas))
+    Ok(retrieve_transaction_receipt(web3, tx_hash).await?.and_then(|tx| tx.gas_used))
 }
 
 #[tokio::main]
 async fn main() -> web3::Result<()> {
-    let transport = web3::transports::Http::new("http://localhost:8545")?;
+    // let transport = web3::transports::Http::new("http://localhost:8545")?;
+    let transport = web3::transports::Http::new("https://mainnet.infura.io/v3/c15ab95c12d441d19702cb4a0d1313e7")?;
     let web3 = web3::Web3::new(transport);
 
     // parse args
@@ -434,7 +557,7 @@ async fn main() -> web3::Result<()> {
     // process
     match mode {
         "pairwise" => process_pairwise(&db, from..=to, output),
-        "aborts" => process_aborts(&db, &web3, from..=to, output).await,
+        "aborts" => process_aborts2(&db, &web3, from..=to, output).await,
         _ => {
             println!("mode should be one of: pairwise, aborts");
             return Ok(());
