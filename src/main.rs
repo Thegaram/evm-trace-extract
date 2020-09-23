@@ -319,37 +319,18 @@ async fn process_block_aborts(
     }
 }
 
-async fn process_block_aborts2(
-    web3: &Web3,
-    block: u64,
-    txs: Vec<TransactionInfo>,
-    mode: OutputMode,
-) {
-    // retrieve all gas costs  before processing block
-    let tx_gas = retrieve_gas_parity(web3, block)
-        // let gas = retrieve_gas_parallel(web3, txs.iter().map(|tx| tx.tx_hash.clone()))
-        .await
-        .expect(&format!("Error while collecting gas for block #{}", block)[..]);
-
-    assert_eq!(txs.len(), tx_gas.len());
-
+fn process_block_aborts2(txs: &Vec<TransactionInfo>, tx_gas: &Vec<U256>) -> (i32, U256) {
     let mut storages = HashMap::new();
     let mut tx_aborted = false;
     let mut num_aborted = 0;
 
-    // serial gas cost is simply the sum of all gas costs
-    let mut serial_gas_cost = U256::from(0);
-
     // parallel gas cost is the cost of parallel execution (max gas cost)
     // + sum of gas costs for aborted txs
-    let mut parallel_gas_cost = tx_gas.iter().max().cloned().unwrap_or(U256::from(0));
+    let mut cost = tx_gas.iter().max().cloned().unwrap_or(U256::from(0));
 
     for (id, tx) in txs.iter().enumerate() {
         let TransactionInfo { tx_hash, accesses } = tx;
         let gas = tx_gas[id];
-
-        // for serial execution, we simply add up all gas costs
-        serial_gas_cost += gas;
 
         // go through accesses without enacting the changes,
         // just checking conflicts
@@ -375,38 +356,15 @@ async fn process_block_aborts2(
             num_aborted += 1;
 
             // gas contributes to cost serial execution after parallel one
-            parallel_gas_cost += gas;
+            cost += gas;
         }
     }
 
-    match mode {
-        OutputMode::Normal | OutputMode::Detailed => {
-            println!(
-                "Gas cost of block #{}: {} --> {}\n",
-                block, serial_gas_cost, parallel_gas_cost,
-            );
-        }
-        OutputMode::Csv => {
-            println!(
-                "{},{},{},{}",
-                block, num_aborted, serial_gas_cost, parallel_gas_cost
-            );
-        }
-    }
+    (num_aborted, cost)
 }
 
-async fn process_block_aborts3(web3: &'static Web3, block: u64, txs: Vec<TransactionInfo>) -> U256 {
-    // retrieve all gas costs  before processing block
-    let gas = retrieve_gas_parity(web3, block)
-        // let gas = retrieve_gas_parallel(web3, txs.iter().map(|tx| tx.tx_hash.clone()))
-        .await
-        .expect(&format!("Error while collecting gas for block #{}", block)[..]);
-
-    assert_eq!(txs.len(), gas.len());
-
-    const BATCH_SIZE: usize = 4;
-
-    let mut next_to_process = std::cmp::min(BATCH_SIZE, txs.len()); // 4
+fn process_block_aborts3(batch_size: usize, txs: &Vec<TransactionInfo>, gas: &Vec<U256>) -> U256 {
+    let mut next_to_process = std::cmp::min(batch_size, txs.len()); // 4
     let mut batch = (0..next_to_process).collect::<Vec<_>>(); // [0, 1, 2, 3]
     let mut gas_cost = U256::from(0);
 
@@ -428,9 +386,8 @@ async fn process_block_aborts3(web3: &'static Web3, block: u64, txs: Vec<Transac
 
         // process batch
         let mut storages = HashMap::new(); // start with clear storage (!)
-        let mut aborted: Vec<usize> = vec![];
 
-        for id in batch {
+        'outer: for id in batch {
             let TransactionInfo { tx_hash, accesses } = &txs[id];
 
             // detect aborts
@@ -438,12 +395,18 @@ async fn process_block_aborts3(web3: &'static Web3, block: u64, txs: Vec<Transac
                 // ignore balance for now
                 if let Target::Storage(addr, entry) = &acc.target {
                     if storages.contains_key(&(addr, entry)) {
-                        aborted.push(id);
+                        // e.g. if our batch is [0, 1, 2, 3]
+                        // and we detect a conflict while committing `2`,
+                        // then the next batch is [2, 3, 4, 5]
+                        // because the outdated value read by `2` might affect `3`
+
+                        next_to_process = id;
+                        break 'outer;
                     }
                 }
             }
 
-            // enact updates
+            // commit updates
             for acc in accesses {
                 // ignore balance for now
                 if let Target::Storage(addr, entry) = &acc.target {
@@ -452,12 +415,13 @@ async fn process_block_aborts3(web3: &'static Web3, block: u64, txs: Vec<Transac
             }
         }
 
-        while aborted.len() < BATCH_SIZE && next_to_process < txs.len() {
-            aborted.push(next_to_process);
+        // prepare next batch
+        batch = vec![];
+
+        while batch.len() < batch_size && next_to_process < txs.len() {
+            batch.push(next_to_process);
             next_to_process += 1;
         }
-
-        batch = aborted;
     }
 
     gas_cost
@@ -514,21 +478,42 @@ async fn process_aborts2(
 ) {
     // print csv header if necessary
     if mode == OutputMode::Csv {
-        println!("block,num_aborted,serial_gas_cost,parallel_gas_cost");
+        println!("block,num_aborted,serial_gas_cost,parallel_gas_cost,batch_2,batch_4,batch_8,batch_16,batch_all");
     }
 
     for block in blocks {
         let tx_infos = tx_infos_from_db(&db, block);
 
-        if matches!(mode, OutputMode::Normal | OutputMode::Detailed) {
+        // retrieve all gas costs  before processing block
+        let gas = retrieve_gas_parity(web3, block)
+            // let gas = retrieve_gas_parallel(web3, txs.iter().map(|tx| tx.tx_hash.clone()))
+            .await
+            .expect(&format!("Error while collecting gas for block #{}", block)[..]);
+
+        assert_eq!(tx_infos.len(), gas.len());
+
+        let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
+        let (num_aborted, parallel) = process_block_aborts2(&tx_infos, &gas);
+        let batch_2 = process_block_aborts3(2, &tx_infos, &gas);
+        let batch_4 = process_block_aborts3(4, &tx_infos, &gas);
+        let batch_8 = process_block_aborts3(8, &tx_infos, &gas);
+        let batch_16 = process_block_aborts3(16, &tx_infos, &gas);
+        let batch_all = process_block_aborts3(tx_infos.len(), &tx_infos, &gas);
+
+        if mode == OutputMode::Csv {
             println!(
-                "Checking aborts in block #{} ({} txs)...",
+                "{},{},{},{},{},{},{},{},{}",
                 block,
-                tx_infos.len(),
+                num_aborted,
+                serial,
+                parallel,
+                batch_2,
+                batch_4,
+                batch_8,
+                batch_16,
+                batch_all
             );
         }
-
-        process_block_aborts2(web3, block, tx_infos, mode).await;
     }
 }
 
