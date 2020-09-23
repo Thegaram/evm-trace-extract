@@ -325,13 +325,6 @@ async fn process_block_aborts2(
     txs: Vec<TransactionInfo>,
     mode: OutputMode,
 ) {
-    let mut storages = HashMap::new();
-    let mut serial_gas_cost = U256::from(0);
-    let mut parallel_gas_cost = U256::from(0);
-    let mut max_gas_cost_of_parallel_txs = U256::from(0);
-
-    let mut tx_aborted = false;
-
     // retrieve all gas costs  before processing block
     let tx_gas = retrieve_gas_parity(web3, block)
         // let gas = retrieve_gas_parallel(web3, txs.iter().map(|tx| tx.tx_hash.clone()))
@@ -339,6 +332,17 @@ async fn process_block_aborts2(
         .expect(&format!("Error while collecting gas for block #{}", block)[..]);
 
     assert_eq!(txs.len(), tx_gas.len());
+
+    let mut storages = HashMap::new();
+    let mut tx_aborted = false;
+    let mut num_aborted = 0;
+
+    // serial gas cost is simply the sum of all gas costs
+    let mut serial_gas_cost = U256::from(0);
+
+    // parallel gas cost is the cost of parallel execution (max gas cost)
+    // + sum of gas costs for aborted txs
+    let mut parallel_gas_cost = tx_gas.iter().max().cloned().unwrap_or(U256::from(0));
 
     for (id, tx) in txs.iter().enumerate() {
         let TransactionInfo { tx_hash, accesses } = tx;
@@ -368,17 +372,12 @@ async fn process_block_aborts2(
         }
 
         if tx_aborted {
+            num_aborted += 1;
+
             // gas contributes to cost serial execution after parallel one
             parallel_gas_cost += gas;
-        } else {
-            // gas contributed to cost of parallel execution
-            if gas > max_gas_cost_of_parallel_txs {
-                max_gas_cost_of_parallel_txs = gas;
-            }
         }
     }
-
-    parallel_gas_cost += max_gas_cost_of_parallel_txs;
 
     match mode {
         OutputMode::Normal | OutputMode::Detailed => {
@@ -388,7 +387,10 @@ async fn process_block_aborts2(
             );
         }
         OutputMode::Csv => {
-            println!("{},{},{}", block, serial_gas_cost, parallel_gas_cost);
+            println!(
+                "{},{},{},{}",
+                block, num_aborted, serial_gas_cost, parallel_gas_cost
+            );
         }
     }
 }
@@ -512,7 +514,7 @@ async fn process_aborts2(
 ) {
     // print csv header if necessary
     if mode == OutputMode::Csv {
-        println!("block,serial_gas_cost,parallel_gas_cost");
+        println!("block,num_aborted,serial_gas_cost,parallel_gas_cost");
     }
 
     for block in blocks {
