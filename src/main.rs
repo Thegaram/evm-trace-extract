@@ -532,10 +532,10 @@ async fn process_aborts2(
 
 #[tokio::main]
 async fn main() -> web3::Result<()> {
-    // let transport = web3::transports::Http::new("http://localhost:8545")?;
-    let transport = web3::transports::Http::new(
-        "https://mainnet.infura.io/v3/c15ab95c12d441d19702cb4a0d1313e7",
-    )?;
+    let transport = web3::transports::Http::new("http://localhost:8545")?;
+    // let transport = web3::transports::Http::new(
+    //     "https://mainnet.infura.io/v3/c15ab95c12d441d19702cb4a0d1313e7",
+    // )?;
     let web3 = web3::Web3::new(transport);
 
     // parse args
