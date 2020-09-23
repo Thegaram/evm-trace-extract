@@ -324,11 +324,8 @@ async fn process_block_aborts2(
     block: u64,
     txs: Vec<TransactionInfo>,
     mode: OutputMode,
-    ignore_balance: bool,
 ) {
-    let mut balances = HashMap::new();
     let mut storages = HashMap::new();
-
     let mut serial_gas_cost = U256::from(0);
     let mut parallel_gas_cost = U256::from(0);
     let mut max_gas_cost_of_parallel_txs = U256::from(0);
@@ -341,38 +338,21 @@ async fn process_block_aborts2(
         .await
         .expect(&format!("Error while collecting gas for block #{}", block)[..]);
 
-    for (id, tx) in txs.into_iter().enumerate() {
+    assert_eq!(txs.len(), tx_gas.len());
+
+    for (id, tx) in txs.iter().enumerate() {
         let TransactionInfo { tx_hash, accesses } = tx;
         let gas = tx_gas[id];
 
-        serial_gas_cost = serial_gas_cost.saturating_add(gas);
+        // for serial execution, we simply add up all gas costs
+        serial_gas_cost += gas;
 
         // go through accesses without enacting the changes,
         // just checking conflicts
-        for access in &accesses {
-            match &access.target {
-                Target::Balance(addr) => {
-                    // ignore balance conflicts
-                    if ignore_balance {
-                        continue;
-                    }
-
-                    // no conflict
-                    if !balances.contains_key(addr) {
-                        continue;
-                    }
-
-                    tx_aborted = true;
-                    break;
-                }
-                Target::Storage(addr, entry) => {
-                    let key = (addr.clone(), entry.clone());
-
-                    // no conflict
-                    if !storages.contains_key(&key) {
-                        continue;
-                    }
-
+        for acc in accesses {
+            // ignore balance for now
+            if let Target::Storage(addr, entry) = &acc.target {
+                if storages.contains_key(&(addr, entry)) {
                     tx_aborted = true;
                     break;
                 }
@@ -380,27 +360,25 @@ async fn process_block_aborts2(
         }
 
         // enact changes
-        for access in accesses.into_iter().filter(|a| a.mode == AccessMode::Write) {
-            match access.target {
-                Target::Balance(addr) => {
-                    balances.insert(addr, tx_hash.clone());
-                }
-                Target::Storage(addr, entry) => {
-                    storages.insert((addr, entry), tx_hash.clone());
-                }
+        for acc in accesses {
+            // ignore balance for now
+            if let Target::Storage(addr, entry) = &acc.target {
+                storages.insert((addr, entry), tx_hash);
             }
         }
 
         if tx_aborted {
-            parallel_gas_cost = parallel_gas_cost.saturating_add(gas);
+            // gas contributes to cost serial execution after parallel one
+            parallel_gas_cost += gas;
         } else {
+            // gas contributed to cost of parallel execution
             if gas > max_gas_cost_of_parallel_txs {
                 max_gas_cost_of_parallel_txs = gas;
             }
         }
     }
 
-    parallel_gas_cost = parallel_gas_cost.saturating_add(max_gas_cost_of_parallel_txs);
+    parallel_gas_cost += max_gas_cost_of_parallel_txs;
 
     match mode {
         OutputMode::Normal | OutputMode::Detailed => {
@@ -421,6 +399,8 @@ async fn process_block_aborts3(web3: &'static Web3, block: u64, txs: Vec<Transac
         // let gas = retrieve_gas_parallel(web3, txs.iter().map(|tx| tx.tx_hash.clone()))
         .await
         .expect(&format!("Error while collecting gas for block #{}", block)[..]);
+
+    assert_eq!(txs.len(), gas.len());
 
     const BATCH_SIZE: usize = 4;
 
@@ -465,7 +445,7 @@ async fn process_block_aborts3(web3: &'static Web3, block: u64, txs: Vec<Transac
             for acc in accesses {
                 // ignore balance for now
                 if let Target::Storage(addr, entry) = &acc.target {
-                    storages.insert((addr, entry), tx_hash.clone());
+                    storages.insert((addr, entry), tx_hash);
                 }
             }
         }
@@ -546,10 +526,7 @@ async fn process_aborts2(
             );
         }
 
-        process_block_aborts2(
-            web3, block, tx_infos, mode, /* ignore_balance = */ true,
-        )
-        .await;
+        process_block_aborts2(web3, block, tx_infos, mode).await;
     }
 }
 
