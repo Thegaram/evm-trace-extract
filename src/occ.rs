@@ -7,7 +7,7 @@ pub fn occ_num_aborts(txs: &Vec<TransactionInfo>) -> u64 {
     let mut storages = HashSet::new();
     let mut num_aborted = 0;
 
-    for tx in txs.iter() {
+    for tx in txs {
         let TransactionInfo { accesses, .. } = tx;
 
         // check for conflicts without committing changes

@@ -32,15 +32,13 @@ pub async fn retrieve_gas_parallel(
         // this should not be expensive
         let web3 = web3.clone();
 
-        let fut = async move {
+        tokio::spawn(async move {
             match retrieve_gas(&web3, &tx[..]).await {
                 Err(e) => panic!(format!("Failed to retrieve gas for {}: {}", tx, e)),
                 Ok(None) => panic!(format!("Failed to retrieve gas for {}: None", tx)),
                 Ok(Some(g)) => g,
             }
-        };
-
-        tokio::spawn(fut)
+        })
     });
 
     stream::iter(tasks)
@@ -70,4 +68,27 @@ pub async fn retrieve_gas_parity(web3: &Web3, block: u64) -> web3::Result<Vec<U2
         .collect();
 
     Ok(gas)
+}
+
+pub fn retrieve_gas_parity_parallel<'a>(
+    web3: &'a Web3,
+    blocks: impl Iterator<Item = u64> + 'a,
+) -> impl stream::Stream<Item = Vec<U256>> + 'a {
+    // create async tasks, one for each tx hash
+    let tasks = blocks.map(move |b| {
+        // clone so that we can move into async block
+        // this should not be expensive
+        let web3 = web3.clone();
+
+        tokio::spawn(async move {
+            match retrieve_gas_parity(&web3, b).await {
+                Err(e) => panic!(format!("Failed to retrieve gas for {}: {}", b, e)),
+                Ok(g) => g,
+            }
+        })
+    });
+
+    stream::iter(tasks)
+        .buffered(100) // execute in parallel in batches of 8
+        .map(|x| x.expect("RPC should succeed"))
 }

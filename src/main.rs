@@ -9,9 +9,10 @@ mod rpc;
 mod stats;
 mod transaction_info;
 
+use futures::{stream, StreamExt};
 use occ::{occ_batches, occ_num_aborts, occ_parallel_then_serial};
 use rocksdb::{Options, SliceTransform, DB};
-use rpc::{retrieve_gas, retrieve_gas_parity};
+use rpc::{retrieve_gas, retrieve_gas_parity_parallel};
 use stats::{BlockStats, TxPairStats};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -364,26 +365,20 @@ async fn process_aborts(db: &DB, web3: &Web3, blocks: impl Iterator<Item = u64>,
     // }
 }
 
-async fn process_aborts2(
-    db: &DB,
-    web3: &Web3,
-    blocks: impl Iterator<Item = u64>,
-    mode: OutputMode,
-) {
+async fn process_aborts2(db: &DB, web3: &Web3, from: u64, to: u64, mode: OutputMode) {
     // print csv header if necessary
     if mode == OutputMode::Csv {
         println!("block,num_aborted,serial_gas_cost,parallel_gas_cost,batch_2,batch_4,batch_8,batch_16,batch_all");
     }
 
-    for block in blocks {
+    // construct async streams for blocks and tx receipts
+    let blocks = stream::iter(from..=to);
+    let gases = retrieve_gas_parity_parallel(&web3, from..=to);
+    let mut both = blocks.zip(gases);
+
+    // process blocks one by one
+    while let Some((block, gas)) = both.next().await {
         let txs = tx_infos_from_db(&db, block);
-
-        // retrieve all gas costs  before processing block
-        let gas = retrieve_gas_parity(web3, block)
-            // let gas = retrieve_gas_parallel(web3, txs.iter().map(|tx| tx.tx_hash.clone()))
-            .await
-            .expect(&format!("Error while collecting gas for block #{}", block)[..]);
-
         assert_eq!(txs.len(), gas.len());
 
         let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
@@ -466,7 +461,7 @@ async fn main() -> web3::Result<()> {
     // process
     match mode {
         "pairwise" => process_pairwise(&db, from..=to, output),
-        "aborts" => process_aborts2(&db, &web3, from..=to, output).await,
+        "aborts" => process_aborts2(&db, &web3, from, to, output).await,
         _ => {
             println!("mode should be one of: pairwise, aborts");
             return Ok(());
