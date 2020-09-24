@@ -4,10 +4,12 @@ extern crate regex;
 extern crate rocksdb;
 extern crate web3;
 
+mod occ;
 mod rpc;
 mod stats;
 mod transaction_info;
 
+use occ::{occ_batches, occ_num_aborts, occ_parallel_then_serial};
 use rocksdb::{Options, SliceTransform, DB};
 use rpc::{retrieve_gas, retrieve_gas_parity};
 use stats::{BlockStats, TxPairStats};
@@ -319,114 +321,6 @@ async fn process_block_aborts(
     }
 }
 
-fn process_block_aborts2(txs: &Vec<TransactionInfo>, tx_gas: &Vec<U256>) -> (i32, U256) {
-    let mut storages = HashMap::new();
-    let mut tx_aborted = false;
-    let mut num_aborted = 0;
-
-    // parallel gas cost is the cost of parallel execution (max gas cost)
-    // + sum of gas costs for aborted txs
-    let mut cost = tx_gas.iter().max().cloned().unwrap_or(U256::from(0));
-
-    for (id, tx) in txs.iter().enumerate() {
-        let TransactionInfo { tx_hash, accesses } = tx;
-        let gas = tx_gas[id];
-
-        // go through accesses without enacting the changes,
-        // just checking conflicts
-        for acc in accesses {
-            // ignore balance for now
-            if let Target::Storage(addr, entry) = &acc.target {
-                if storages.contains_key(&(addr, entry)) {
-                    tx_aborted = true;
-                    break;
-                }
-            }
-        }
-
-        // enact changes
-        for acc in accesses {
-            // ignore balance for now
-            if let Target::Storage(addr, entry) = &acc.target {
-                storages.insert((addr, entry), tx_hash);
-            }
-        }
-
-        if tx_aborted {
-            num_aborted += 1;
-
-            // gas contributes to cost serial execution after parallel one
-            cost += gas;
-        }
-    }
-
-    (num_aborted, cost)
-}
-
-fn process_block_aborts3(batch_size: usize, txs: &Vec<TransactionInfo>, gas: &Vec<U256>) -> U256 {
-    let mut next_to_process = std::cmp::min(batch_size, txs.len()); // 4
-    let mut batch = (0..next_to_process).collect::<Vec<_>>(); // [0, 1, 2, 3]
-    let mut gas_cost = U256::from(0);
-
-    loop {
-        // exit condition: nothing left to process
-        if batch.is_empty() {
-            assert!(next_to_process == txs.len());
-            break;
-        }
-
-        // cost of batch is the maximum gas cost in this batch
-        let cost_of_batch = batch
-            .iter()
-            .map(|id| gas[*id])
-            .max()
-            .expect("batch not empty");
-
-        gas_cost += cost_of_batch;
-
-        // process batch
-        let mut storages = HashMap::new(); // start with clear storage (!)
-
-        'outer: for id in batch {
-            let TransactionInfo { tx_hash, accesses } = &txs[id];
-
-            // detect aborts
-            for acc in accesses {
-                // ignore balance for now
-                if let Target::Storage(addr, entry) = &acc.target {
-                    if storages.contains_key(&(addr, entry)) {
-                        // e.g. if our batch is [0, 1, 2, 3]
-                        // and we detect a conflict while committing `2`,
-                        // then the next batch is [2, 3, 4, 5]
-                        // because the outdated value read by `2` might affect `3`
-
-                        next_to_process = id;
-                        break 'outer;
-                    }
-                }
-            }
-
-            // commit updates
-            for acc in accesses {
-                // ignore balance for now
-                if let Target::Storage(addr, entry) = &acc.target {
-                    storages.insert((addr, entry), tx_hash);
-                }
-            }
-        }
-
-        // prepare next batch
-        batch = vec![];
-
-        while batch.len() < batch_size && next_to_process < txs.len() {
-            batch.push(next_to_process);
-            next_to_process += 1;
-        }
-    }
-
-    gas_cost
-}
-
 async fn process_aborts(db: &DB, web3: &Web3, blocks: impl Iterator<Item = u64>, mode: OutputMode) {
     // print csv header if necessary
     if mode == OutputMode::Csv {
@@ -482,7 +376,7 @@ async fn process_aborts2(
     }
 
     for block in blocks {
-        let tx_infos = tx_infos_from_db(&db, block);
+        let txs = tx_infos_from_db(&db, block);
 
         // retrieve all gas costs  before processing block
         let gas = retrieve_gas_parity(web3, block)
@@ -490,15 +384,16 @@ async fn process_aborts2(
             .await
             .expect(&format!("Error while collecting gas for block #{}", block)[..]);
 
-        assert_eq!(tx_infos.len(), gas.len());
+        assert_eq!(txs.len(), gas.len());
 
         let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
-        let (num_aborted, parallel) = process_block_aborts2(&tx_infos, &gas);
-        let batch_2 = process_block_aborts3(2, &tx_infos, &gas);
-        let batch_4 = process_block_aborts3(4, &tx_infos, &gas);
-        let batch_8 = process_block_aborts3(8, &tx_infos, &gas);
-        let batch_16 = process_block_aborts3(16, &tx_infos, &gas);
-        let batch_all = process_block_aborts3(tx_infos.len(), &tx_infos, &gas);
+        let num_aborted = occ_num_aborts(&txs);
+        let parallel = occ_parallel_then_serial(&txs, &gas);
+        let batch_2 = occ_batches(&txs, &gas, 2);
+        let batch_4 = occ_batches(&txs, &gas, 4);
+        let batch_8 = occ_batches(&txs, &gas, 8);
+        let batch_16 = occ_batches(&txs, &gas, 16);
+        let batch_all = occ_batches(&txs, &gas, txs.len());
 
         if mode == OutputMode::Csv {
             println!(
