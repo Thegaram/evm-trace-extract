@@ -5,7 +5,7 @@ use web3::{transports, types::TransactionReceipt, types::U256, Transport, Web3 a
 type Web3 = Web3Generic<transports::Http>;
 
 // retrieve tx gas using `eth_getTransactionReceipt`
-pub async fn retrieve_gas(web3: &Web3, tx_hash: &str) -> Result<Option<U256>, web3::Error> {
+pub async fn gas(web3: &Web3, tx_hash: &str) -> Result<Option<U256>, web3::Error> {
     let tx_hash = tx_hash
         .trim_start_matches("0x")
         .parse()
@@ -22,7 +22,7 @@ pub async fn retrieve_gas(web3: &Web3, tx_hash: &str) -> Result<Option<U256>, we
 
 // retrieve block tx gases using `eth_getTransactionReceipt`
 #[allow(dead_code)]
-pub async fn retrieve_gas_parallel(
+pub async fn gas_parallel(
     web3: &Web3,
     hashes: impl Iterator<Item = String>,
 ) -> Result<Vec<U256>, JoinError> {
@@ -33,7 +33,7 @@ pub async fn retrieve_gas_parallel(
         let web3 = web3.clone();
 
         tokio::spawn(async move {
-            match retrieve_gas(&web3, &tx[..]).await {
+            match gas(&web3, &tx[..]).await {
                 Err(e) => panic!(format!("Failed to retrieve gas for {}: {}", tx, e)),
                 Ok(None) => panic!(format!("Failed to retrieve gas for {}: None", tx)),
                 Ok(Some(g)) => g,
@@ -42,7 +42,7 @@ pub async fn retrieve_gas_parallel(
     });
 
     stream::iter(tasks)
-        .buffered(20) // execute in parallel in batches of 8
+        .buffered(4) // execute in parallel in batches of 4
         .collect::<Vec<_>>()
         .await // wait for all requests to complete
         .into_iter()
@@ -50,8 +50,8 @@ pub async fn retrieve_gas_parallel(
 }
 
 // retrieve block tx gases using `parity_getBlockReceipts`
-// this should be faster than `retrieve_gas_parallel`
-pub async fn retrieve_gas_parity(web3: &Web3, block: u64) -> web3::Result<Vec<U256>> {
+// this should be faster than `gas_parallel`
+pub async fn gas_parity(web3: &Web3, block: u64) -> web3::Result<Vec<U256>> {
     // convert block number to hex
     let block = format!("0x{:x}", block).into();
 
@@ -70,7 +70,7 @@ pub async fn retrieve_gas_parity(web3: &Web3, block: u64) -> web3::Result<Vec<U2
     Ok(gas)
 }
 
-pub fn retrieve_gas_parity_parallel<'a>(
+pub fn gas_parity_parallel<'a>(
     web3: &'a Web3,
     blocks: impl Iterator<Item = u64> + 'a,
 ) -> impl stream::Stream<Item = Vec<U256>> + 'a {
@@ -81,7 +81,7 @@ pub fn retrieve_gas_parity_parallel<'a>(
         let web3 = web3.clone();
 
         tokio::spawn(async move {
-            match retrieve_gas_parity(&web3, b).await {
+            match gas_parity(&web3, b).await {
                 Err(e) => panic!(format!("Failed to retrieve gas for {}: {}", b, e)),
                 Ok(g) => g,
             }
@@ -89,6 +89,6 @@ pub fn retrieve_gas_parity_parallel<'a>(
     });
 
     stream::iter(tasks)
-        .buffered(100) // execute in parallel in batches of 8
+        .buffered(4) // execute in parallel in batches of 4
         .map(|x| x.expect("RPC should succeed"))
 }

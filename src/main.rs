@@ -4,172 +4,23 @@ extern crate regex;
 extern crate rocksdb;
 extern crate web3;
 
+mod db;
 mod occ;
+mod output_mode;
+mod pairwise;
 mod rpc;
 mod stats;
 mod transaction_info;
 
 use futures::{stream, StreamExt};
-use occ::{occ_batches, occ_num_aborts, occ_parallel_then_serial};
-use rocksdb::{Options, SliceTransform, DB};
-use rpc::{retrieve_gas, retrieve_gas_parity_parallel};
-use stats::{BlockStats, TxPairStats};
+use output_mode::OutputMode;
+use rocksdb::DB;
 use std::collections::{HashMap, HashSet};
 use std::env;
-use transaction_info::{Access, AccessMode, Target, TransactionInfo};
+use transaction_info::{AccessMode, Target, TransactionInfo};
 use web3::{transports, types::U256, Web3 as Web3Generic};
 
 type Web3 = Web3Generic<transports::Http>;
-
-#[derive(Clone, Copy, Eq, PartialEq)]
-enum OutputMode {
-    Normal,
-    Detailed,
-    Csv,
-}
-
-impl OutputMode {
-    fn from_str(raw: &str) -> OutputMode {
-        match raw {
-            "normal" => OutputMode::Normal,
-            "detailed" => OutputMode::Detailed,
-            "csv" => OutputMode::Csv,
-            x => panic!("Unknown OutputMode type: {}", x),
-        }
-    }
-}
-
-fn tx_infos_from_db(db: &DB, block: u64) -> Vec<TransactionInfo> {
-    use transaction_info::{parse_accesses, parse_tx_hash};
-
-    let prefix = format!("{:0>8}", block);
-    let iter = db.prefix_iterator(prefix.as_bytes());
-
-    iter.status().unwrap();
-
-    iter.map(|(key, value)| {
-        let key = std::str::from_utf8(&*key).expect("key read is valid string");
-        let value = std::str::from_utf8(&*value).expect("value read is valid string");
-
-        TransactionInfo {
-            tx_hash: parse_tx_hash(key).to_owned(),
-            accesses: parse_accesses(value).to_owned(),
-        }
-    })
-    .collect()
-}
-
-fn into_pairwise_iter<'a>(
-    txs: &'a Vec<TransactionInfo>,
-) -> impl Iterator<Item = (&'a TransactionInfo, &'a TransactionInfo)> {
-    (0..(txs.len() - 1))
-        .flat_map(move |ii| ((ii + 1)..txs.len()).map(move |jj| (ii, jj)))
-        .map(move |(ii, jj)| (&txs[ii], &txs[jj]))
-}
-
-fn extract_tx_stats<'a>(pair: (&'a TransactionInfo, &'a TransactionInfo)) -> TxPairStats<'a> {
-    let (tx_a, tx_b) = pair;
-    let mut stats = TxPairStats::new(&tx_a.tx_hash, &tx_b.tx_hash);
-
-    for access in &tx_a.accesses {
-        match access {
-            Access {
-                target: Target::Balance(addr),
-                mode: AccessMode::Read,
-            } => {
-                if tx_b.accesses.contains(&Access {
-                    target: Target::Balance(addr.clone()),
-                    mode: AccessMode::Write,
-                }) {
-                    stats.balance_rw += 1;
-                }
-            }
-            Access {
-                target: Target::Balance(addr),
-                mode: AccessMode::Write,
-            } => {
-                if tx_b.accesses.contains(&Access {
-                    target: Target::Balance(addr.clone()),
-                    mode: AccessMode::Read,
-                }) {
-                    stats.balance_rw += 1;
-                }
-
-                if tx_b.accesses.contains(&Access {
-                    target: Target::Balance(addr.clone()),
-                    mode: AccessMode::Write,
-                }) {
-                    stats.balance_ww += 1;
-                }
-            }
-            Access {
-                target: Target::Storage(addr, entry),
-                mode: AccessMode::Read,
-            } => {
-                if tx_b.accesses.contains(&Access {
-                    target: Target::Storage(addr.clone(), entry.clone()),
-                    mode: AccessMode::Write,
-                }) {
-                    stats.storage_rw += 1;
-                }
-            }
-            Access {
-                target: Target::Storage(addr, entry),
-                mode: AccessMode::Write,
-            } => {
-                if tx_b.accesses.contains(&Access {
-                    target: Target::Storage(addr.clone(), entry.clone()),
-                    mode: AccessMode::Read,
-                }) {
-                    stats.storage_rw += 1;
-                }
-
-                if tx_b.accesses.contains(&Access {
-                    target: Target::Storage(addr.clone(), entry.clone()),
-                    mode: AccessMode::Write,
-                }) {
-                    stats.storage_ww += 1;
-                }
-            }
-        }
-    }
-
-    stats
-}
-
-fn process_txs_pairwise(block: u64, tx_infos: Vec<TransactionInfo>, mode: OutputMode) {
-    // collect pairwise stats
-    let mut block_stats = BlockStats::new(block);
-
-    for stats in into_pairwise_iter(&tx_infos).map(extract_tx_stats) {
-        block_stats.accumulate(&stats);
-
-        if mode == OutputMode::Detailed && stats.has_conflict() {
-            println!("    {:?}", stats);
-        }
-    }
-
-    // print stats
-    match mode {
-        OutputMode::Normal | OutputMode::Detailed => {
-            if !block_stats.has_conflicts() {
-                println!("No conflicts in block\n");
-                return;
-            }
-
-            println!("{:?}\n", block_stats);
-        }
-        OutputMode::Csv => {
-            println!(
-                "{},{},{},{}",
-                block,
-                block_stats.num_conflicting_pairs(),
-                block_stats.conflicting_pairs_balance,
-                block_stats.conflicting_pairs_storage
-            );
-        }
-    }
-}
 
 fn process_pairwise(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode) {
     // print csv header if necessary
@@ -179,7 +30,7 @@ fn process_pairwise(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode
 
     // process blocks
     for block in blocks {
-        let tx_infos = tx_infos_from_db(&db, block);
+        let tx_infos = db::tx_infos(&db, block);
 
         if matches!(mode, OutputMode::Normal | OutputMode::Detailed) {
             println!(
@@ -189,10 +40,11 @@ fn process_pairwise(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode
             );
         }
 
-        process_txs_pairwise(block, tx_infos, mode);
+        pairwise::process(block, tx_infos, mode);
     }
 }
 
+#[allow(dead_code)]
 async fn process_block_aborts(
     web3: &Web3,
     block: u64,
@@ -297,7 +149,7 @@ async fn process_block_aborts(
             num_aborted_txs_in_block += 1;
 
             // TODO: get gas for the whole block?
-            let gas = retrieve_gas(web3, &tx_hash[..])
+            let gas = rpc::gas(web3, &tx_hash[..])
                 .await
                 .expect(&format!("Unable to retrieve gas (1) {}", tx_hash)[..])
                 .expect(&format!("Unable to retrieve gas (2) {}", tx_hash)[..]);
@@ -319,9 +171,11 @@ async fn process_block_aborts(
         OutputMode::Csv => {
             println!("{},{}", block, num_aborted_txs_in_block);
         }
+        _ => {}
     }
 }
 
+#[allow(dead_code)]
 async fn process_aborts(db: &DB, web3: &Web3, blocks: impl Iterator<Item = u64>, mode: OutputMode) {
     // print csv header if necessary
     if mode == OutputMode::Csv {
@@ -331,7 +185,7 @@ async fn process_aborts(db: &DB, web3: &Web3, blocks: impl Iterator<Item = u64>,
     let mut abort_stats = HashMap::new();
 
     for block in blocks {
-        let tx_infos = tx_infos_from_db(&db, block);
+        let tx_infos = db::tx_infos(&db, block);
 
         if matches!(mode, OutputMode::Normal | OutputMode::Detailed) {
             println!(
@@ -365,7 +219,7 @@ async fn process_aborts(db: &DB, web3: &Web3, blocks: impl Iterator<Item = u64>,
     // }
 }
 
-async fn process_aborts2(db: &DB, web3: &Web3, from: u64, to: u64, mode: OutputMode) {
+async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: OutputMode) {
     // print csv header if necessary
     if mode == OutputMode::Csv {
         println!("block,num_aborted,serial_gas_cost,parallel_gas_cost,batch_2,batch_4,batch_8,batch_16,batch_all");
@@ -373,22 +227,22 @@ async fn process_aborts2(db: &DB, web3: &Web3, from: u64, to: u64, mode: OutputM
 
     // construct async streams for blocks and tx receipts
     let blocks = stream::iter(from..=to);
-    let gases = retrieve_gas_parity_parallel(&web3, from..=to);
+    let gases = rpc::gas_parity_parallel(&web3, from..=to);
     let mut both = blocks.zip(gases);
 
     // process blocks one by one
     while let Some((block, gas)) = both.next().await {
-        let txs = tx_infos_from_db(&db, block);
+        let txs = db::tx_infos(&db, block);
         assert_eq!(txs.len(), gas.len());
 
         let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
-        let num_aborted = occ_num_aborts(&txs);
-        let parallel = occ_parallel_then_serial(&txs, &gas);
-        let batch_2 = occ_batches(&txs, &gas, 2);
-        let batch_4 = occ_batches(&txs, &gas, 4);
-        let batch_8 = occ_batches(&txs, &gas, 8);
-        let batch_16 = occ_batches(&txs, &gas, 16);
-        let batch_all = occ_batches(&txs, &gas, txs.len());
+        let num_aborted = occ::num_aborts(&txs);
+        let parallel = occ::parallel_then_serial(&txs, &gas);
+        let batch_2 = occ::batches(&txs, &gas, 2);
+        let batch_4 = occ::batches(&txs, &gas, 4);
+        let batch_8 = occ::batches(&txs, &gas, 8);
+        let batch_16 = occ::batches(&txs, &gas, 16);
+        let batch_all = occ::batches(&txs, &gas, txs.len());
 
         if mode == OutputMode::Csv {
             println!(
@@ -410,9 +264,6 @@ async fn process_aborts2(db: &DB, web3: &Web3, from: u64, to: u64, mode: OutputM
 #[tokio::main]
 async fn main() -> web3::Result<()> {
     let transport = web3::transports::Http::new("http://localhost:8545")?;
-    // let transport = web3::transports::Http::new(
-    //     "https://mainnet.infura.io/v3/c15ab95c12d441d19702cb4a0d1313e7",
-    // )?;
     let web3 = web3::Web3::new(transport);
 
     // parse args
@@ -434,13 +285,7 @@ async fn main() -> web3::Result<()> {
     let output = OutputMode::from_str(&args[5][..]);
 
     // open db
-    let prefix_extractor = SliceTransform::create_fixed_prefix(8);
-
-    let mut opts = Options::default();
-    opts.create_if_missing(false);
-    opts.set_prefix_extractor(prefix_extractor);
-
-    let db = DB::open(&opts, path).expect("can open db");
+    let db = db::open(path);
 
     // check range
     let latest_raw = db
@@ -461,7 +306,7 @@ async fn main() -> web3::Result<()> {
     // process
     match mode {
         "pairwise" => process_pairwise(&db, from..=to, output),
-        "aborts" => process_aborts2(&db, &web3, from, to, output).await,
+        "aborts" => occ_detailed_stats(&db, &web3, from, to, output).await,
         _ => {
             println!("mode should be one of: pairwise, aborts");
             return Ok(());

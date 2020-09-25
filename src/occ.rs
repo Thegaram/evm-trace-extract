@@ -1,11 +1,18 @@
 use crate::transaction_info::{AccessMode, Target, TransactionInfo};
-use std::cmp::min;
-use std::collections::HashSet;
+use std::{cmp::min, collections::HashSet};
 use web3::types::U256;
 
-pub fn occ_num_aborts(txs: &Vec<TransactionInfo>) -> u64 {
-    let mut storages = HashSet::new();
+// Estimate number of aborts (due to conflicts) in block.
+// The actual number can be lower if we process transactions in batches,
+//      e.g. with batches of size 2, tx-1's write will not affect tx-3's read.
+// The actual number can also be higher because the same transaction could be aborted multiple times,
+//      e.g. with batch [tx-1, tx-2, tx-3], tx-2's abort will make tx-3 abort as well,
+//      then in the next batch [tx-2, tx-3, tx-4] tx-3 might be aborted again if it reads a slot written by tx-2.
+pub fn num_aborts(txs: &Vec<TransactionInfo>) -> u64 {
     let mut num_aborted = 0;
+
+    // keep track of which storage entries were written
+    let mut storages = HashSet::new();
 
     for tx in txs {
         let TransactionInfo { accesses, .. } = tx;
@@ -32,9 +39,13 @@ pub fn occ_num_aborts(txs: &Vec<TransactionInfo>) -> u64 {
     num_aborted
 }
 
-pub fn occ_parallel_then_serial(txs: &Vec<TransactionInfo>, gas: &Vec<U256>) -> U256 {
+// First execute all transaction in parallel (infinite threads), then re-execute aborted ones serially.
+// Note that this is inaccuare in practice: if tx-1 and tx-3 succeed and tx-2 aborts, we will have to
+// re-execute both tx-2 and tx-3, as tx-2's new storage access patterns might make tx-3 abort this time.
+pub fn parallel_then_serial(txs: &Vec<TransactionInfo>, gas: &Vec<U256>) -> U256 {
     assert_eq!(txs.len(), gas.len());
 
+    // keep track of which storage entries were written
     let mut storages = HashSet::new();
 
     // parallel gas cost is the cost of parallel execution (max gas cost)
@@ -67,7 +78,11 @@ pub fn occ_parallel_then_serial(txs: &Vec<TransactionInfo>, gas: &Vec<U256>) -> 
     parallel_cost + serial_cost
 }
 
-pub fn occ_batches(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, batch_size: usize) -> U256 {
+// Process transactions in fixed-size batches.
+// We assume a batch's execution cost is (proportional to) the largest gas cost in that batch.
+// If the n'th transaction in a batch aborts (detected on commit), we will re-execute all transactions after (and including) n.
+// Note that in this scheme, we wait for all txs in a batch before starting the next one, resulting in thread under-utilization.
+pub fn batches(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, batch_size: usize) -> U256 {
     assert_eq!(txs.len(), gas.len());
 
     let mut next = min(batch_size, txs.len()); // e.g. 4
@@ -90,10 +105,12 @@ pub fn occ_batches(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, batch_size: usiz
 
         cost += cost_of_batch;
 
-        // process batch
+        // keep track of which storage entries were written
         // start with clear storage for each batch!
+        // i.e. txs will not abort due to writes in previous batches
         let mut storages = HashSet::new();
 
+        // process batch
         'outer: for id in batch {
             let TransactionInfo { accesses, .. } = &txs[id];
 
