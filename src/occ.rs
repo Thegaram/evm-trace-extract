@@ -235,8 +235,10 @@ pub fn thread_pool(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, num_threads: usi
         commit_queue.push(Reverse((tx_id, sv)));
         cost += gas_step;
 
-        for (_, mut gas_left, _) in &mut threads.iter_mut().filter_map(|x| *x) {
-            gas_left -= gas_step;
+        for ii in 0..threads.len() {
+            if let Some((_, gas_left, _)) = &mut threads[ii] {
+                *gas_left -= gas_step;
+            }
         }
 
         println!("[C] threads after execution = {:?}", threads);
