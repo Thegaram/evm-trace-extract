@@ -194,8 +194,6 @@ pub fn thread_pool(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, num_threads: usi
             break;
         }
 
-        println!("[A] threads before scheduling = {:?}", threads);
-
         // scheduling: run transactions on idle threads
         let idle_threads = threads
             .iter()
@@ -213,11 +211,8 @@ pub fn thread_pool(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, num_threads: usi
             let gas_left = gas[tx_id];
             let sv = next_to_commit as i32 - 1;
 
-            println!("[X] scheduling tx {} on thread {} with gas_left = {} and sv = {}", tx_id, thread_id, gas_left, sv);
             threads[thread_id] = Some((tx_id, gas_left, sv));
         }
-
-        println!("[B] threads after scheduling = {:?}", threads);
 
         // find transaction that finishes execution next
         let (thread_id, (tx_id, gas_step, sv)) = threads
@@ -229,8 +224,6 @@ pub fn thread_pool(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, num_threads: usi
             .expect("not all threads are idle");
 
         // finish executing tx, update thread states
-        println!("[X] finish executing tx {} on thread {}", tx_id, thread_id);
-
         threads[thread_id] = None;
         commit_queue.push(Reverse((tx_id, sv)));
         cost += gas_step;
@@ -240,10 +233,6 @@ pub fn thread_pool(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, num_threads: usi
                 *gas_left -= gas_step;
             }
         }
-
-        println!("[C] threads after execution = {:?}", threads);
-
-        println!("[D] commit_queue before commit = {:?}", commit_queue);
 
         // process commits/aborts
         while let Some(Reverse((tx_id, _))) = commit_queue.peek() {
@@ -278,17 +267,13 @@ pub fn thread_pool(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, num_threads: usi
 
             // commit transaction
             if !aborted {
-                println!("[X] tx {} committed", tx_id);
                 next_to_commit += 1;
                 continue;
             }
 
             // re-schedule aborted tx
-            println!("[X] tx {} aborted", tx_id);
             tx_queue.push(Reverse(tx_id));
         }
-
-        println!("[E] commit_queue after commit = {:?}", commit_queue);
     }
 
     cost
