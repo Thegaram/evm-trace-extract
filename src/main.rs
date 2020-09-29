@@ -237,16 +237,24 @@ async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: Outp
 
         let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
         let num_aborted = occ::num_aborts(&txs);
+
         let parallel = occ::parallel_then_serial(&txs, &gas);
+
         let batch_2 = occ::batches(&txs, &gas, 2);
         let batch_4 = occ::batches(&txs, &gas, 4);
         let batch_8 = occ::batches(&txs, &gas, 8);
         let batch_16 = occ::batches(&txs, &gas, 16);
         let batch_all = occ::batches(&txs, &gas, txs.len());
 
+        let pool_2 = occ::thread_pool(&txs, &gas, 2);
+        let pool_4 = occ::thread_pool(&txs, &gas, 4);
+        let pool_8 = occ::thread_pool(&txs, &gas, 8);
+        let pool_16 = occ::thread_pool(&txs, &gas, 16);
+        let pool_all = occ::thread_pool(&txs, &gas, txs.len());
+
         if mode == OutputMode::Csv {
             println!(
-                "{},{},{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                 block,
                 num_aborted,
                 serial,
@@ -255,7 +263,12 @@ async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: Outp
                 batch_4,
                 batch_8,
                 batch_16,
-                batch_all
+                batch_all,
+                pool_2,
+                pool_4,
+                pool_8,
+                pool_16,
+                pool_all,
             );
         }
     }

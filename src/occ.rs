@@ -1,5 +1,7 @@
-use crate::transaction_info::{AccessMode, Target, TransactionInfo};
-use std::{cmp::min, collections::HashSet};
+use crate::transaction_info::{Access, AccessMode, Target, TransactionInfo};
+use std::cmp::{min, Reverse};
+use std::collections::{BinaryHeap, HashSet};
+use std::convert::TryFrom;
 use web3::types::U256;
 
 // Estimate number of aborts (due to conflicts) in block.
@@ -149,3 +151,139 @@ pub fn batches(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, batch_size: usize) -
 
     cost
 }
+
+pub fn thread_pool(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, num_threads: usize) -> U256 {
+    assert_eq!(txs.len(), gas.len());
+
+    type MinHeap<T> = BinaryHeap<Reverse<T>>;
+
+    // transaction queue: transactions waiting to be executed
+    // item: <transaction-id>
+    // pop() always returns the lowest transaction-id
+    let mut tx_queue: MinHeap<usize> = (0..txs.len()).map(Reverse).collect();
+
+    // commit queue: txs that finished execution and are waiting to commit
+    // item: <transaction-id, storage-version>
+    // pop() always returns the lowest transaction-id
+    // storage-version is the highest committed transaction-id before the tx's execution started
+    let mut commit_queue: MinHeap<(usize, i32)> = Default::default();
+
+    // next transaction-id to commit
+    let mut next_to_commit = 0;
+
+    // thread pool: information on current execution on each thread
+    // item: <transaction-id, gas-left, storage-version> or None if idle
+    let mut threads: Vec<Option<(usize, U256, i32)>> = vec![None; num_threads];
+
+    // overall cost of execution
+    let mut cost = U256::from(0);
+
+    loop {
+        println!("[A] tx_queue = {:?}", tx_queue);
+        println!("[A] commit_queue = {:?}", commit_queue);
+        println!("[A] threads = {:?}", threads);
+
+        // exit condition: we have committed all transactions
+        if next_to_commit == txs.len() {
+            // nothing left to execute or commit
+            assert!(tx_queue.is_empty(), "tx queue not empty");
+            assert!(commit_queue.is_empty(), "commit queue not empty");
+
+            // all threads are idle
+            assert!(
+                threads.iter().all(|opt| opt.is_none()),
+                "some threads are not idle"
+            );
+
+            break;
+        }
+
+        // scheduling: run transactions on idle threads
+        let idle_threads = threads
+            .iter()
+            .enumerate()
+            .filter(|(_, opt)| opt.is_none())
+            .map(|(id, _)| id)
+            .collect::<Vec<_>>();
+
+        for thread_id in idle_threads {
+            if tx_queue.is_empty() {
+                break;
+            }
+
+            let Reverse(tx_id) = tx_queue.pop().expect("not empty");
+            let gas_left = gas[tx_id];
+            let sv = next_to_commit as i32 - 1;
+
+            threads[thread_id] = Some((tx_id, gas_left, sv));
+        }
+
+        // find transaction that finishes execution next
+        let (thread_id, (tx_id, gas_step, sv)) = threads
+            .iter()
+            .enumerate()
+            .filter(|(_, opt)| opt.is_some())
+            .map(|(id, opt)| (id, opt.unwrap()))
+            .min_by_key(|(_, (_, gas_left, _))| *gas_left)
+            .expect("not all threads are idle");
+
+        // finish executing tx, update thread states
+        threads[thread_id] = None;
+        commit_queue.push(Reverse((tx_id, sv)));
+        cost += gas_step;
+
+        for (_, mut gas_left, _) in &mut threads.iter_mut().filter_map(|x| *x) {
+            gas_left -= gas_step;
+        }
+
+        println!("[B] tx_queue = {:?}", tx_queue);
+        println!("[B] commit_queue = {:?}", commit_queue);
+        println!("[B] threads = {:?}", threads);
+
+        // process commits/aborts
+        while let Some(Reverse((tx_id, _))) = commit_queue.peek() {
+            // we must commit transactions in order
+            if *tx_id != next_to_commit {
+                assert!(*tx_id > next_to_commit);
+                break;
+            }
+
+            let Reverse((tx_id, sv)) = commit_queue.pop().unwrap();
+
+            // check all potentially conflicting transactions
+            // e.g. if tx-3 was executed with sv = -1, it means that it cannot see writes by tx-0, tx-1, tx-2
+            let conflict_from = usize::try_from(sv + 1).expect("sv + 1 should be non-negative");
+            let conflict_to = tx_id - 1;
+
+            let accesses = &txs[tx_id].accesses;
+            let mut aborted = false;
+
+            'outer: for prev_tx in conflict_from..=conflict_to {
+                let concurrent = &txs[prev_tx].accesses;
+
+                for acc in accesses.iter().filter(|a| a.mode == AccessMode::Read) {
+                    if let Target::Storage(addr, entry) = &acc.target {
+                        if concurrent.contains(&Access::storage_write(addr, entry)) {
+                            aborted = true;
+                            break 'outer;
+                        }
+                    }
+                }
+            }
+
+            // commit transaction
+            if !aborted {
+                next_to_commit += 1;
+                continue;
+            }
+
+            // re-schedule aborted tx
+            tx_queue.push(Reverse(tx_id));
+        }
+    }
+
+    cost
+}
+
+// TODO: utilize CPUs
+// TODO: re-use previous results, don't re-execute unnecesarily

@@ -47,6 +47,13 @@ impl Access {
 
         Access { target, mode }
     }
+
+    pub fn storage_write(addr: &String, entry: &String) -> Access {
+        Access {
+            target: Target::Storage(addr.clone(), entry.clone()),
+            mode: AccessMode::Write,
+        }
+    }
 }
 
 #[derive(Debug)]
