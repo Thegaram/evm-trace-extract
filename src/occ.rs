@@ -258,12 +258,12 @@ pub fn thread_pool(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, num_threads: usi
             // check all potentially conflicting transactions
             // e.g. if tx-3 was executed with sv = -1, it means that it cannot see writes by tx-0, tx-1, tx-2
             let conflict_from = usize::try_from(sv + 1).expect("sv + 1 should be non-negative");
-            let conflict_to = tx_id - 1;
+            let conflict_to = tx_id;
 
             let accesses = &txs[tx_id].accesses;
             let mut aborted = false;
 
-            'outer: for prev_tx in conflict_from..=conflict_to {
+            'outer: for prev_tx in conflict_from..conflict_to {
                 let concurrent = &txs[prev_tx].accesses;
 
                 for acc in accesses.iter().filter(|a| a.mode == AccessMode::Read) {
