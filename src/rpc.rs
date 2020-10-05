@@ -1,6 +1,10 @@
 use futures::{stream, StreamExt};
 use tokio::task::JoinError;
-use web3::{transports, types::TransactionReceipt, types::U256, Transport, Web3 as Web3Generic};
+use web3::{
+    transports,
+    types::{BlockId, BlockNumber, TransactionReceipt, H160, U256},
+    Transport, Web3 as Web3Generic,
+};
 
 type Web3 = Web3Generic<transports::Http>;
 
@@ -84,6 +88,46 @@ pub fn gas_parity_parallel<'a>(
             match gas_parity(&web3, b).await {
                 Err(e) => panic!(format!("Failed to retrieve gas for {}: {}", b, e)),
                 Ok(g) => g,
+            }
+        })
+    });
+
+    stream::iter(tasks)
+        .buffered(4) // execute in parallel in batches of 4
+        .map(|x| x.expect("RPC should succeed"))
+}
+
+// TODO
+pub async fn block_receivers(
+    web3: &Web3,
+    num: u64,
+) -> Result<Option<Vec<Option<H160>>>, web3::Error> {
+    let block = BlockId::Number(BlockNumber::Number(num.into()));
+
+    let raw = web3
+        .eth()
+        .block_with_txs(block)
+        .await?
+        .map(|b| b.transactions.iter().map(|tx| tx.to).collect::<Vec<_>>());
+
+    Ok(raw)
+}
+
+pub fn block_receivers_parallel<'a>(
+    web3: &'a Web3,
+    blocks: impl Iterator<Item = u64> + 'a,
+) -> impl stream::Stream<Item = Vec<Option<H160>>> + 'a {
+    // create async tasks, one for each tx hash
+    let tasks = blocks.map(move |b| {
+        // clone so that we can move into async block
+        // this should not be expensive
+        let web3 = web3.clone();
+
+        tokio::spawn(async move {
+            match block_receivers(&web3, b).await {
+                Err(e) => panic!(format!("Failed to retrieve transactions for {}: {}", b, e)),
+                Ok(None) => panic!(format!("Block {} not found", b)),
+                Ok(Some(receivers)) => receivers,
             }
         })
     });

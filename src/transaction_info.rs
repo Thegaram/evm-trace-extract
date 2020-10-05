@@ -56,7 +56,7 @@ impl Access {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct TransactionInfo {
     pub tx_hash: String,
     pub accesses: HashSet<Access>,

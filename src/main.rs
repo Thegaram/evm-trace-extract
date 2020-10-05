@@ -228,10 +228,13 @@ async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: Outp
     // construct async streams for blocks and tx receipts
     let blocks = stream::iter(from..=to);
     let gases = rpc::gas_parity_parallel(&web3, from..=to);
-    let mut both = blocks.zip(gases);
+    let receivers = rpc::block_receivers_parallel(&web3, from..=to);
+
+    let it = blocks.zip(gases);
+    let mut it = it.zip(receivers);
 
     // process blocks one by one
-    while let Some((block, gas)) = both.next().await {
+    while let Some(((block, gas), receiver)) = it.next().await {
         let txs = db::tx_infos(&db, block);
         assert_eq!(txs.len(), gas.len());
 
@@ -252,9 +255,15 @@ async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: Outp
         let pool_16 = occ::thread_pool(&txs, &gas, 16);
         let pool_all = occ::thread_pool(&txs, &gas, txs.len());
 
+        let pool2_2 = occ::thread_pool2(&txs, &gas, &receiver, 2);
+        let pool2_4 = occ::thread_pool2(&txs, &gas, &receiver, 4);
+        let pool2_8 = occ::thread_pool2(&txs, &gas, &receiver, 8);
+        let pool2_16 = occ::thread_pool2(&txs, &gas, &receiver, 16);
+        let pool2_all = occ::thread_pool2(&txs, &gas, &receiver, txs.len());
+
         if mode == OutputMode::Csv {
             println!(
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                 block,
                 num_aborted,
                 serial,
@@ -269,6 +278,11 @@ async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: Outp
                 pool_8,
                 pool_16,
                 pool_all,
+                pool2_2,
+                pool2_4,
+                pool2_8,
+                pool2_16,
+                pool2_all,
             );
         }
     }
