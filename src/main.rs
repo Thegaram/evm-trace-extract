@@ -222,7 +222,7 @@ async fn process_aborts(db: &DB, web3: &Web3, blocks: impl Iterator<Item = u64>,
 async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: OutputMode) {
     // print csv header if necessary
     if mode == OutputMode::Csv {
-        println!("block,num_aborted,serial_gas_cost,parallel_gas_cost,batch_2,batch_4,batch_8,batch_16,batch_all,pool_2,pool_4,pool_8,pool_16,pool_all,pool2_2,pool2_4,pool2_8,pool2_16,pool2_all");
+        println!("block,num_txs,num_aborted,serial_gas_cost,parallel_gas_cost,batch_2,batch_4,batch_8,batch_16,batch_all,pool_2,pool_4,pool_8,pool_16,pool_all,pool2_2,pool2_4,pool2_8,pool2_16,pool2_all");
     }
 
     // construct async streams for blocks and tx receipts
@@ -239,6 +239,7 @@ async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: Outp
         assert_eq!(txs.len(), gas.len());
 
         let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
+        let num_txs = txs.len();
         let num_aborted = occ::num_aborts(&txs);
 
         let parallel = occ::parallel_then_serial(&txs, &gas);
@@ -263,8 +264,9 @@ async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: Outp
 
         if mode == OutputMode::Csv {
             println!(
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                 block,
+                num_txs,
                 num_aborted,
                 serial,
                 parallel,
