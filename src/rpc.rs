@@ -101,14 +101,14 @@ pub fn gas_parity_parallel<'a>(
 pub async fn block_receivers(
     web3: &Web3,
     num: u64,
-) -> Result<Option<Vec<Option<H160>>>, web3::Error> {
+) -> Result<Option<Vec<(Option<H160>, U256)>>, web3::Error> {
     let block = BlockId::Number(BlockNumber::Number(num.into()));
 
     let raw = web3
         .eth()
         .block_with_txs(block)
         .await?
-        .map(|b| b.transactions.iter().map(|tx| tx.to).collect::<Vec<_>>());
+        .map(|b| b.transactions.iter().map(|tx| (tx.to, tx.gas)).collect::<Vec<_>>());
 
     Ok(raw)
 }
@@ -116,7 +116,7 @@ pub async fn block_receivers(
 pub fn block_receivers_parallel<'a>(
     web3: &'a Web3,
     blocks: impl Iterator<Item = u64> + 'a,
-) -> impl stream::Stream<Item = Vec<Option<H160>>> + 'a {
+) -> impl stream::Stream<Item = Vec<(Option<H160>, U256)>> + 'a {
     // create async tasks, one for each tx hash
     let tasks = blocks.map(move |b| {
         // clone so that we can move into async block

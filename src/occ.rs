@@ -282,7 +282,7 @@ pub fn thread_pool(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, num_threads: usi
 pub fn thread_pool2(
     txs: &Vec<TransactionInfo>,
     gas: &Vec<U256>,
-    receivers: &Vec<Option<H160>>,
+    receivers: &Vec<(Option<H160>, U256)>,
     num_threads: usize,
 ) -> U256 {
     assert_eq!(txs.len(), gas.len());
@@ -364,16 +364,24 @@ pub fn thread_pool2(
 
                 let Reverse(tx_id) = tx_queue.pop().expect("not empty");
 
+                if receivers[tx_id].1 < U256::from(100000) {
+                    let gas_left = gas[tx_id];
+                    let sv = next_to_commit as i32 - 1;
+                    // println!("[{}] scheduling {} on {} from global queue", num_iteration, tx_id, thread_id);
+                    threads[thread_id] = Some((tx_id, gas_left, sv));
+                    break;
+                }
+
                 // check if there's any potentially conflicting tx running
                 // and add it to the corresponding thread's queue
-                let rec = receivers[tx_id];
+                let rec = receivers[tx_id].0;
 
                 let conflicting_threads = threads
                     .iter()
                     .enumerate()
                     .filter(|(_, opt)| opt.is_some())
                     .map(|(id, opt)| (id, opt.unwrap()))
-                    .filter(|(_, (id, _, _))| receivers[*id] == rec)
+                    .filter(|(_, (id, _, _))| receivers[*id].0 == rec)
                     .map(|(id, _)| id);
 
                 for other_thread in conflicting_threads {
