@@ -104,11 +104,12 @@ pub async fn block_receivers(
 ) -> Result<Option<Vec<(Option<H160>, U256)>>, web3::Error> {
     let block = BlockId::Number(BlockNumber::Number(num.into()));
 
-    let raw = web3
-        .eth()
-        .block_with_txs(block)
-        .await?
-        .map(|b| b.transactions.iter().map(|tx| (tx.to, tx.gas)).collect::<Vec<_>>());
+    let raw = web3.eth().block_with_txs(block).await?.map(|b| {
+        b.transactions
+            .iter()
+            .map(|tx| (tx.to, tx.gas))
+            .collect::<Vec<_>>()
+    });
 
     Ok(raw)
 }
