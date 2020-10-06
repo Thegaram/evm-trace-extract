@@ -74,6 +74,7 @@ pub async fn gas_parity(web3: &Web3, block: u64) -> web3::Result<Vec<U256>> {
     Ok(gas)
 }
 
+#[allow(dead_code)]
 pub fn gas_parity_parallel<'a>(
     web3: &'a Web3,
     blocks: impl Iterator<Item = u64> + 'a,
@@ -98,7 +99,7 @@ pub fn gas_parity_parallel<'a>(
 }
 
 // TODO
-pub async fn block_receivers(
+pub async fn tx_infos(
     web3: &Web3,
     num: u64,
 ) -> Result<Option<Vec<(Option<H160>, U256)>>, web3::Error> {
@@ -114,7 +115,8 @@ pub async fn block_receivers(
     Ok(raw)
 }
 
-pub fn block_receivers_parallel<'a>(
+#[allow(dead_code)]
+pub fn tx_infos_parallel<'a>(
     web3: &'a Web3,
     blocks: impl Iterator<Item = u64> + 'a,
 ) -> impl stream::Stream<Item = Vec<(Option<H160>, U256)>> + 'a {
@@ -125,7 +127,7 @@ pub fn block_receivers_parallel<'a>(
         let web3 = web3.clone();
 
         tokio::spawn(async move {
-            match block_receivers(&web3, b).await {
+            match tx_infos(&web3, b).await {
                 Err(e) => panic!(format!("Failed to retrieve transactions for {}: {}", b, e)),
                 Ok(None) => panic!(format!("Block {} not found", b)),
                 Ok(Some(receivers)) => receivers,
