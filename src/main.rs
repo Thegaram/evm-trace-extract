@@ -227,7 +227,7 @@ async fn process_aborts(db: &DB, web3: &Web3, blocks: impl Iterator<Item = u64>,
 async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: OutputMode) {
     // print csv header if necessary
     if mode == OutputMode::Csv {
-        println!("block,num_txs,num_aborted,serial_gas_cost,parallel_gas_cost,batch_2,batch_4,batch_8,batch_16,batch_all,pool_2,pool_4,pool_8,pool_16,pool_all,pool2_2,pool2_4,pool2_8,pool2_16,pool2_all");
+        println!("block,num_txs,num_aborted,serial_gas_cost,pool_2,pool_4,pool_8,pool_16,pool_all,pool2_2,pool2_4,pool2_8,pool2_16,pool2_all");
     }
 
     use futures::{stream, StreamExt};
@@ -268,39 +268,71 @@ async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: Outp
         let num_txs = txs.len();
         let num_aborted = occ::num_aborts(&txs);
 
-        let parallel = occ::parallel_then_serial(&txs, &gas);
+        let txs_clone = txs.clone();
+        let gas_clone = gas.clone();
+        let pool_2 = tokio::spawn(async move { occ::thread_pool(&txs_clone, &gas_clone, 2) });
 
-        let batch_2 = occ::batches(&txs, &gas, 2);
-        let batch_4 = occ::batches(&txs, &gas, 4);
-        let batch_8 = occ::batches(&txs, &gas, 8);
-        let batch_16 = occ::batches(&txs, &gas, 16);
-        let batch_all = occ::batches(&txs, &gas, txs.len());
+        let txs_clone = txs.clone();
+        let gas_clone = gas.clone();
+        let pool_4 = tokio::spawn(async move { occ::thread_pool(&txs_clone, &gas_clone, 4) });
 
-        let pool_2 = occ::thread_pool(&txs, &gas, 2);
-        let pool_4 = occ::thread_pool(&txs, &gas, 4);
-        let pool_8 = occ::thread_pool(&txs, &gas, 8);
-        let pool_16 = occ::thread_pool(&txs, &gas, 16);
-        let pool_all = occ::thread_pool(&txs, &gas, txs.len());
+        let txs_clone = txs.clone();
+        let gas_clone = gas.clone();
+        let pool_8 = tokio::spawn(async move { occ::thread_pool(&txs_clone, &gas_clone, 8) });
 
-        let pool2_2 = occ::thread_pool2(&txs, &gas, &receiver, 2);
-        let pool2_4 = occ::thread_pool2(&txs, &gas, &receiver, 4);
-        let pool2_8 = occ::thread_pool2(&txs, &gas, &receiver, 8);
-        let pool2_16 = occ::thread_pool2(&txs, &gas, &receiver, 16);
-        let pool2_all = occ::thread_pool2(&txs, &gas, &receiver, txs.len());
+        let txs_clone = txs.clone();
+        let gas_clone = gas.clone();
+        let pool_16 = tokio::spawn(async move { occ::thread_pool(&txs_clone, &gas_clone, 16) });
+
+        let txs_clone = txs.clone();
+        let gas_clone = gas.clone();
+        let pool_all = tokio::spawn(async move { occ::thread_pool(&txs_clone, &gas_clone, txs_clone.len()) });
+
+        let txs_clone = txs.clone();
+        let gas_clone = gas.clone();
+        let receiver_clone = receiver.clone();
+        let pool2_2 = tokio::spawn(async move { occ::thread_pool2(&txs_clone, &gas_clone, &receiver_clone, 2) });
+
+        let txs_clone = txs.clone();
+        let gas_clone = gas.clone();
+        let receiver_clone = receiver.clone();
+        let pool2_4 = tokio::spawn(async move { occ::thread_pool2(&txs_clone, &gas_clone, &receiver_clone, 4) });
+
+        let txs_clone = txs.clone();
+        let gas_clone = gas.clone();
+        let receiver_clone = receiver.clone();
+        let pool2_8 = tokio::spawn(async move { occ::thread_pool2(&txs_clone, &gas_clone, &receiver_clone, 8) });
+
+        let txs_clone = txs.clone();
+        let gas_clone = gas.clone();
+        let receiver_clone = receiver.clone();
+        let pool2_16 = tokio::spawn(async move { occ::thread_pool2(&txs_clone, &gas_clone, &receiver_clone, 16) });
+
+        let txs_clone = txs.clone();
+        let gas_clone = gas.clone();
+        let receiver_clone = receiver.clone();
+        let pool2_all = tokio::spawn(async move { occ::thread_pool2(&txs_clone, &gas_clone, &receiver_clone, txs_clone.len()) });
+
+        let x = future::join_all(vec![pool_2, pool_4, pool_8, pool_16, pool_all, pool2_2, pool2_4, pool2_8, pool2_16, pool2_all]).await;
+
+        let pool_2 = x[0].as_ref().unwrap();
+        let pool_4 = x[1].as_ref().unwrap();
+        let pool_8 = x[2].as_ref().unwrap();
+        let pool_16 = x[3].as_ref().unwrap();
+        let pool_all = x[4].as_ref().unwrap();
+        let pool2_2 = x[5].as_ref().unwrap();
+        let pool2_4 = x[6].as_ref().unwrap();
+        let pool2_8 = x[7].as_ref().unwrap();
+        let pool2_16 = x[8].as_ref().unwrap();
+        let pool2_all = x[9].as_ref().unwrap();
 
         if mode == OutputMode::Csv {
             println!(
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                 block,
                 num_txs,
                 num_aborted,
                 serial,
-                parallel,
-                batch_2,
-                batch_4,
-                batch_8,
-                batch_16,
-                batch_all,
                 pool_2,
                 pool_4,
                 pool_8,
