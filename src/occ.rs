@@ -2,7 +2,8 @@ use crate::transaction_info::{Access, AccessMode, Target, TransactionInfo};
 use std::cmp::{min, Reverse};
 use std::collections::{BinaryHeap, HashSet};
 use std::convert::TryFrom;
-use web3::types::{H160, U256};
+use web3::types::U256;
+use crate::rpc;
 
 // Estimate number of aborts (due to conflicts) in block.
 // The actual number can be lower if we process transactions in batches,
@@ -157,10 +158,10 @@ pub fn batches(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, batch_size: usize) -
 pub fn thread_pool(
     txs: &Vec<TransactionInfo>,
     gas: &Vec<U256>,
-    info: &Vec<(Option<H160>, U256)>,
+    info: &Vec<rpc::TxInfo>,
     num_threads: usize,
     max_queued_per_thread: usize,
-    min_gas_for_queue: U256, // 100000
+    min_gas_for_queue: U256,
 ) -> U256 {
     assert_eq!(txs.len(), gas.len());
 
@@ -234,11 +235,8 @@ pub fn thread_pool(
                     None => break,
                 };
 
-                let receiver = info[tx_id].0;
-                let gas_limit = info[tx_id].1;
-
                 // cheap transactions are scheduled directly on the current thread
-                if gas_limit < min_gas_for_queue {
+                if info[tx_id].gas_limit < min_gas_for_queue {
                     let gas_left = gas[tx_id];
                     let sv = next_to_commit as i32 - 1;
                     threads[thread_id] = Some((tx_id, gas_left, sv));
@@ -246,12 +244,17 @@ pub fn thread_pool(
                 }
 
                 // check if there's any potentially conflicting tx running
+                let receiver_matches = |info0: &rpc::TxInfo, info1: &rpc::TxInfo| match (info0.to, info1.to) {
+                    (Some(to0), Some(to1)) => to0 == to1,
+                    _ => false,
+                };
+
                 let conflicting_threads = threads
                     .iter()
                     .enumerate()
                     .filter(|(_, opt)| opt.is_some())
                     .map(|(thread_id, opt)| (thread_id, opt.unwrap()))
-                    .filter(|(_, (tx_id, _, _))| info[*tx_id].0 == receiver)
+                    .filter(|(_, (other_tx, _, _))| receiver_matches(&info[tx_id], &info[*other_tx]))
                     .map(|(thread_id, _)| thread_id);
 
                 // and add this tx to the corresponding thread's queue

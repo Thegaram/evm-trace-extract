@@ -254,7 +254,7 @@ async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: Outp
 
     // simulate OCC for each block
     while let Some((block, (gas, info))) = it.next().await {
-        let txs = db::tx_infos(&db, block);
+        let txs = db::tx_infos_2(&db, block, &info);
 
         assert_eq!(txs.len(), gas.len());
         assert_eq!(txs.len(), info.len());

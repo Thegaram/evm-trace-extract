@@ -2,11 +2,17 @@ use futures::{stream, StreamExt};
 use tokio::task::JoinError;
 use web3::{
     transports,
-    types::{BlockId, BlockNumber, TransactionReceipt, H160, U256},
+    types::{BlockId, BlockNumber, TransactionReceipt, H160, H256, U256},
     Transport, Web3 as Web3Generic,
 };
 
 type Web3 = Web3Generic<transports::Http>;
+
+pub struct TxInfo {
+    pub hash: H256,
+    pub to: Option<H160>,
+    pub gas_limit: U256,
+}
 
 // retrieve tx gas using `eth_getTransactionReceipt`
 pub async fn gas(web3: &Web3, tx_hash: &str) -> Result<Option<U256>, web3::Error> {
@@ -102,13 +108,13 @@ pub fn gas_parity_parallel<'a>(
 pub async fn tx_infos(
     web3: &Web3,
     num: u64,
-) -> Result<Option<Vec<(Option<H160>, U256)>>, web3::Error> {
+) -> Result<Option<Vec<TxInfo>>, web3::Error> {
     let block = BlockId::Number(BlockNumber::Number(num.into()));
 
     let raw = web3.eth().block_with_txs(block).await?.map(|b| {
         b.transactions
             .iter()
-            .map(|tx| (tx.to, tx.gas))
+            .map(|tx| TxInfo { hash: tx.hash, to: tx.to, gas_limit: tx.gas })
             .collect::<Vec<_>>()
     });
 
@@ -119,7 +125,7 @@ pub async fn tx_infos(
 pub fn tx_infos_parallel<'a>(
     web3: &'a Web3,
     blocks: impl Iterator<Item = u64> + 'a,
-) -> impl stream::Stream<Item = Vec<(Option<H160>, U256)>> + 'a {
+) -> impl stream::Stream<Item = Vec<TxInfo>> + 'a {
     // create async tasks, one for each tx hash
     let tasks = blocks.map(move |b| {
         // clone so that we can move into async block
