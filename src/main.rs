@@ -230,93 +230,88 @@ async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: Outp
         println!("block,num_txs,num_aborted,serial_gas_cost,parallel_gas_cost,batch_2,batch_4,batch_8,batch_16,batch_all,pool_2,pool_4,pool_8,pool_16,pool_all,pool2_2,pool2_4,pool2_8,pool2_16,pool2_all");
     }
 
-    for chunk in &(from..=to).chunks(100) {
-        let web3 = web3.clone();
+    use futures::{stream, StreamExt};
 
-        let chunk = chunk.collect::<Vec<_>>();
+    let blocks = stream::iter(from..=to);
 
-        let tasks = chunk
-            .clone()
-            .into_iter()
-            .map(|b| {
-                let web3_a = web3.clone();
-                let web3_b = web3.clone();
+    let others = stream::iter(from..=to).map(|b| {
+        let web3_a = web3.clone();
+        let web3_b = web3.clone();
 
-                let a = tokio::spawn(async move {
-                    rpc::gas_parity(&web3_a, b)
-                        .await
-                        .expect("parity_getBlockReceipts RPC should succeed")
-                });
+        let a = tokio::spawn(async move {
+            rpc::gas_parity(&web3_a, b)
+                .await
+                .expect("parity_getBlockReceipts RPC should succeed")
+        });
 
-                let b = tokio::spawn(async move {
-                    rpc::block_receivers(&web3_b, b)
-                        .await
-                        .expect("eth_getBlock RPC should succeed")
-                        .expect("block should exist")
-                });
+        let b = tokio::spawn(async move {
+            rpc::block_receivers(&web3_b, b)
+                .await
+                .expect("eth_getBlock RPC should succeed")
+                .expect("block should exist")
+        });
 
-                use futures::FutureExt;
+        use futures::FutureExt;
 
-                future::join(a, b).map(|(a, b)| (a.unwrap(), b.unwrap()))
-                // tokio::join!(a, b)
-            })
-            .collect::<Vec<_>>();
+        future::join(a, b).map(|(a, b)| (a.unwrap(), b.unwrap()))
+        // tokio::join!(a, b)
+    })
+    .buffered(100);
 
-        let x: Vec<(Vec<U256>, Vec<(Option<H160>, U256)>)> = future::join_all(tasks).await;
+    let mut it = blocks.zip(others);
 
-        for (block, (gas, receiver)) in itertools::zip(chunk, x) {
-            let txs = db::tx_infos(&db, block);
-            assert_eq!(txs.len(), gas.len());
+    while let Some((block, (gas, receiver))) = it.next().await {
+        let txs = db::tx_infos(&db, block);
+        assert_eq!(txs.len(), gas.len());
 
-            let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
-            let num_txs = txs.len();
-            let num_aborted = occ::num_aborts(&txs);
+        let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
+        let num_txs = txs.len();
+        let num_aborted = occ::num_aborts(&txs);
 
-            let parallel = occ::parallel_then_serial(&txs, &gas);
+        let parallel = occ::parallel_then_serial(&txs, &gas);
 
-            let batch_2 = occ::batches(&txs, &gas, 2);
-            let batch_4 = occ::batches(&txs, &gas, 4);
-            let batch_8 = occ::batches(&txs, &gas, 8);
-            let batch_16 = occ::batches(&txs, &gas, 16);
-            let batch_all = occ::batches(&txs, &gas, txs.len());
+        let batch_2 = occ::batches(&txs, &gas, 2);
+        let batch_4 = occ::batches(&txs, &gas, 4);
+        let batch_8 = occ::batches(&txs, &gas, 8);
+        let batch_16 = occ::batches(&txs, &gas, 16);
+        let batch_all = occ::batches(&txs, &gas, txs.len());
 
-            let pool_2 = occ::thread_pool(&txs, &gas, 2);
-            let pool_4 = occ::thread_pool(&txs, &gas, 4);
-            let pool_8 = occ::thread_pool(&txs, &gas, 8);
-            let pool_16 = occ::thread_pool(&txs, &gas, 16);
-            let pool_all = occ::thread_pool(&txs, &gas, txs.len());
+        let pool_2 = occ::thread_pool(&txs, &gas, 2);
+        let pool_4 = occ::thread_pool(&txs, &gas, 4);
+        let pool_8 = occ::thread_pool(&txs, &gas, 8);
+        let pool_16 = occ::thread_pool(&txs, &gas, 16);
+        let pool_all = occ::thread_pool(&txs, &gas, txs.len());
 
-            let pool2_2 = occ::thread_pool2(&txs, &gas, &receiver, 2);
-            let pool2_4 = occ::thread_pool2(&txs, &gas, &receiver, 4);
-            let pool2_8 = occ::thread_pool2(&txs, &gas, &receiver, 8);
-            let pool2_16 = occ::thread_pool2(&txs, &gas, &receiver, 16);
-            let pool2_all = occ::thread_pool2(&txs, &gas, &receiver, txs.len());
+        let pool2_2 = occ::thread_pool2(&txs, &gas, &receiver, 2);
+        let pool2_4 = occ::thread_pool2(&txs, &gas, &receiver, 4);
+        let pool2_8 = occ::thread_pool2(&txs, &gas, &receiver, 8);
+        let pool2_16 = occ::thread_pool2(&txs, &gas, &receiver, 16);
+        let pool2_all = occ::thread_pool2(&txs, &gas, &receiver, txs.len());
 
-            if mode == OutputMode::Csv {
-                println!(
-                    "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
-                    block,
-                    num_txs,
-                    num_aborted,
-                    serial,
-                    parallel,
-                    batch_2,
-                    batch_4,
-                    batch_8,
-                    batch_16,
-                    batch_all,
-                    pool_2,
-                    pool_4,
-                    pool_8,
-                    pool_16,
-                    pool_all,
-                    pool2_2,
-                    pool2_4,
-                    pool2_8,
-                    pool2_16,
-                    pool2_all,
-                );
-            }
+        if mode == OutputMode::Csv {
+            println!(
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                block,
+                num_txs,
+                num_aborted,
+                serial,
+                parallel,
+                batch_2,
+                batch_4,
+                batch_8,
+                batch_16,
+                batch_all,
+                pool_2,
+                pool_4,
+                pool_8,
+                pool_16,
+                pool_all,
+                pool2_2,
+                pool2_4,
+                pool2_8,
+                pool2_16,
+                pool2_all,
+            );
         }
     }
 }
