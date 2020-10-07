@@ -105,16 +105,17 @@ pub fn gas_parity_parallel<'a>(
 }
 
 // TODO
-pub async fn tx_infos(
-    web3: &Web3,
-    num: u64,
-) -> Result<Option<Vec<TxInfo>>, web3::Error> {
+pub async fn tx_infos(web3: &Web3, num: u64) -> Result<Option<Vec<TxInfo>>, web3::Error> {
     let block = BlockId::Number(BlockNumber::Number(num.into()));
 
     let raw = web3.eth().block_with_txs(block).await?.map(|b| {
         b.transactions
             .iter()
-            .map(|tx| TxInfo { hash: tx.hash, to: tx.to, gas_limit: tx.gas })
+            .map(|tx| TxInfo {
+                hash: tx.hash,
+                to: tx.to,
+                gas_limit: tx.gas,
+            })
             .collect::<Vec<_>>()
     });
 

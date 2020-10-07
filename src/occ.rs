@@ -1,9 +1,9 @@
+use crate::rpc;
 use crate::transaction_info::{Access, AccessMode, Target, TransactionInfo};
 use std::cmp::{min, Reverse};
 use std::collections::{BinaryHeap, HashSet};
 use std::convert::TryFrom;
 use web3::types::U256;
-use crate::rpc;
 
 // Estimate number of aborts (due to conflicts) in block.
 // The actual number can be lower if we process transactions in batches,
@@ -244,17 +244,20 @@ pub fn thread_pool(
                 }
 
                 // check if there's any potentially conflicting tx running
-                let receiver_matches = |info0: &rpc::TxInfo, info1: &rpc::TxInfo| match (info0.to, info1.to) {
-                    (Some(to0), Some(to1)) => to0 == to1,
-                    _ => false,
-                };
+                let receiver_matches =
+                    |info0: &rpc::TxInfo, info1: &rpc::TxInfo| match (info0.to, info1.to) {
+                        (Some(to0), Some(to1)) => to0 == to1,
+                        _ => false,
+                    };
 
                 let conflicting_threads = threads
                     .iter()
                     .enumerate()
                     .filter(|(_, opt)| opt.is_some())
                     .map(|(thread_id, opt)| (thread_id, opt.unwrap()))
-                    .filter(|(_, (other_tx, _, _))| receiver_matches(&info[tx_id], &info[*other_tx]))
+                    .filter(|(_, (other_tx, _, _))| {
+                        receiver_matches(&info[tx_id], &info[*other_tx])
+                    })
                     .map(|(thread_id, _)| thread_id);
 
                 // and add this tx to the corresponding thread's queue

@@ -30,7 +30,7 @@ fn process_pairwise(db: &DB, blocks: impl Iterator<Item = u64>, mode: OutputMode
 
     // process blocks
     for block in blocks {
-        let tx_infos = db::tx_infos(&db, block);
+        let tx_infos = db::tx_infos_deprecated(&db, block);
 
         if matches!(mode, OutputMode::Normal | OutputMode::Detailed) {
             println!(
@@ -185,7 +185,7 @@ async fn process_aborts(db: &DB, web3: &Web3, blocks: impl Iterator<Item = u64>,
     let mut abort_stats = HashMap::new();
 
     for block in blocks {
-        let tx_infos = db::tx_infos(&db, block);
+        let tx_infos = db::tx_infos_deprecated(&db, block);
 
         if matches!(mode, OutputMode::Normal | OutputMode::Detailed) {
             println!(
@@ -254,7 +254,7 @@ async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: Outp
 
     // simulate OCC for each block
     while let Some((block, (gas, info))) = it.next().await {
-        let txs = db::tx_infos_2(&db, block, &info);
+        let txs = db::tx_infos(&db, block, &info);
 
         assert_eq!(txs.len(), gas.len());
         assert_eq!(txs.len(), info.len());
