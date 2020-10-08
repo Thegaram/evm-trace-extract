@@ -167,14 +167,14 @@ pub fn tx_infos_parallel<'a>(
 mod tests {
     use super::*;
 
-    const BLOCK1: u64 = 6008060;
-    const BLOCK2: u64 = 6008052;
+    const BLOCK1: u64 = 5232800;
+    const BLOCK2: u64 = 5232802;
 
-    const INFURA: &str = "https://mainnet.infura.io/v3/c15ab95c12d441d19702cb4a0d1313e7";
-    // const LOCAL: &str = "http://localhost:8545";
+    // const NODE_URL: &str = "https://mainnet.infura.io/v3/c15ab95c12d441d19702cb4a0d1313e7";
+    const NODE_URL: &str = "http://localhost:8545";
 
     fn web3() -> Result<web3::Web3<transports::Http>, web3::Error>  {
-        let transport = web3::transports::Http::new(INFURA)?;
+        let transport = web3::transports::Http::new(NODE_URL)?;
         Ok(web3::Web3::new(transport))
     }
 
@@ -183,12 +183,12 @@ mod tests {
     async fn test_gas_used() {
         let web3 = web3().expect("can instantiate web3");
 
-        let gas_used = gas_used(&web3, "0xf5625144499769b109058cf7abf41aef1a4323c875e20b429e7174e5c090f9b4")
+        let gas_used = gas_used(&web3, "0xdb9a7dda261eb09fe3d1c3d4cdd00fe93693fa4a932ed6cfa51a5b6696f71c92")
             .await
             .expect("query succeeds")
             .expect("receipt exists");
 
-        assert_eq!(gas_used, U256::from(38_040));
+        assert_eq!(gas_used, U256::from(52_249));
     }
 
     // eth_getTransactionReceipt
@@ -197,9 +197,9 @@ mod tests {
         let web3 = web3().expect("can instantiate web3");
 
         let hashes = vec![
-            "0xcf73737e96c964b294ea326bb264d5b752d1f166dc79449e1f59280e47d2c25c".to_string(),
-            "0x2c75bfe16234a411fcc1a16e8b3a18c53578b86acb485006424fa69eb3c6771c".to_string(),
-            "0xf5625144499769b109058cf7abf41aef1a4323c875e20b429e7174e5c090f9b4".to_string(),
+            "0xdb9a7dda261eb09fe3d1c3d4cdd00fe93693fa4a932ed6cfa51a5b6696f71c92".to_string(),
+            "0xc68501cb5b3eda0fe845c30864a5657c9cf71d492c78f24b92e3d12986ae705b".to_string(),
+            "0x92376a0a83608f630e4ef678de54f437d3fd41cd0165e8799ca782e42eb308cc".to_string(),
         ];
 
         let gas_used = gas_used_parallel(&web3, hashes.into_iter())
@@ -207,9 +207,9 @@ mod tests {
             .expect("queries succeed");
 
         assert_eq!(gas_used.len(), 3);
-        assert_eq!(gas_used[0], U256::from(38_355));
+        assert_eq!(gas_used[0], U256::from(52_249));
         assert_eq!(gas_used[1], U256::from(21_000));
-        assert_eq!(gas_used[2], U256::from(38_040));
+        assert_eq!(gas_used[2], U256::from(898_344));
     }
 
     // parity_getBlockReceipts
@@ -218,19 +218,18 @@ mod tests {
         let web3 = web3().expect("can instantiate web3");
         let receipts = block_receipts_parity(&web3, BLOCK1).await.expect("query succeeds");
 
-        assert_eq!(receipts.len(), 4);
+        assert_eq!(receipts.len(), 88);
 
-        assert_eq!(receipts[0].transaction_hash, "cf73737e96c964b294ea326bb264d5b752d1f166dc79449e1f59280e47d2c25c".parse().unwrap());
-        assert_eq!(receipts[0].gas_used, Some(U256::from(38_355)));
+        assert_eq!(receipts[0].transaction_hash, "c68501cb5b3eda0fe845c30864a5657c9cf71d492c78f24b92e3d12986ae705b".parse().unwrap());
+        assert_eq!(receipts[0].gas_used, Some(U256::from(21_000)));
 
-        assert_eq!(receipts[1].transaction_hash, "2c75bfe16234a411fcc1a16e8b3a18c53578b86acb485006424fa69eb3c6771c".parse().unwrap());
+        assert_eq!(receipts[1].transaction_hash, "f9f3be29b6c70e3032a57e141c8374cc7cfb2b4006a640d680411af024b06179".parse().unwrap());
         assert_eq!(receipts[1].gas_used, Some(U256::from(21_000)));
 
-        assert_eq!(receipts[2].transaction_hash, "f5625144499769b109058cf7abf41aef1a4323c875e20b429e7174e5c090f9b4".parse().unwrap());
-        assert_eq!(receipts[2].gas_used, Some(U256::from(38_040)));
+        // ...
 
-        assert_eq!(receipts[3].transaction_hash, "566413e7a3340390acc6b53ca127559b9893d6111d32c56682a5d2800c720957".parse().unwrap());
-        assert_eq!(receipts[3].gas_used, Some(U256::from(21_000)));
+        assert_eq!(receipts[87].transaction_hash, "76da1628c18e0096ed0a24d37adf110ee39fea04c8bed36dfa7065c016f5d4d3".parse().unwrap());
+        assert_eq!(receipts[87].gas_used, Some(U256::from(24_130)));
     }
 
     // parity_getBlockReceipts
@@ -239,11 +238,11 @@ mod tests {
         let web3 = web3().expect("can instantiate web3");
         let gas_used = gas_parity(&web3, BLOCK1).await.expect("query succeeds");
 
-        assert_eq!(gas_used.len(), 4);
-        assert_eq!(gas_used[0], U256::from(38_355));
+        assert_eq!(gas_used.len(), 88);
+        assert_eq!(gas_used[0], U256::from(21_000));
         assert_eq!(gas_used[1], U256::from(21_000));
-        assert_eq!(gas_used[2], U256::from(38_040));
-        assert_eq!(gas_used[3], U256::from(21_000));
+        // ...
+        assert_eq!(gas_used[87], U256::from(24_130));
     }
 
     // parity_getBlockReceipts
@@ -256,12 +255,12 @@ mod tests {
 
         match stream.next().await {
             None => assert!(false),
-            Some(gas_used) => assert_eq!(gas_used.len(), 4),
+            Some(gas_used) => assert_eq!(gas_used.len(), 88),
         }
 
         match stream.next().await {
             None => assert!(false),
-            Some(gas_used) => assert_eq!(gas_used.len(), 6),
+            Some(gas_used) => assert_eq!(gas_used.len(), 47),
         }
 
         assert!(stream.next().await.is_none());
@@ -277,23 +276,21 @@ mod tests {
             .expect("query succeeds")
             .expect("block exists");
 
-        assert_eq!(txs.len(), 4);
+        assert_eq!(txs.len(), 88);
 
-        assert_eq!(txs[0].hash, "cf73737e96c964b294ea326bb264d5b752d1f166dc79449e1f59280e47d2c25c".parse().unwrap());
-        assert_eq!(txs[0].to, Some("8746811e33dd09e5652f9953b6721aeec6e582c1".parse().unwrap()));
-        assert_eq!(txs[0].gas, U256::from(60_000));
+        assert_eq!(txs[0].hash, "c68501cb5b3eda0fe845c30864a5657c9cf71d492c78f24b92e3d12986ae705b".parse().unwrap());
+        assert_eq!(txs[0].to, Some("9ff305d9f7692a9b45e4f9bce8be4e98992eddde".parse().unwrap()));
+        assert_eq!(txs[0].gas, U256::from(21_000));
 
-        assert_eq!(txs[1].hash, "2c75bfe16234a411fcc1a16e8b3a18c53578b86acb485006424fa69eb3c6771c".parse().unwrap());
-        assert_eq!(txs[1].to, Some("13893c4e295583faec3c5b6b94bfbb907982de4c".parse().unwrap()));
-        assert_eq!(txs[1].gas, U256::from(250_000));
+        assert_eq!(txs[1].hash, "f9f3be29b6c70e3032a57e141c8374cc7cfb2b4006a640d680411af024b06179".parse().unwrap());
+        assert_eq!(txs[1].to, Some("179631c363eef2cfec04f2354476f7b407ed031d".parse().unwrap()));
+        assert_eq!(txs[1].gas, U256::from(150_000));
 
-        assert_eq!(txs[2].hash, "f5625144499769b109058cf7abf41aef1a4323c875e20b429e7174e5c090f9b4".parse().unwrap());
-        assert_eq!(txs[2].to, Some("9b20dabcec77f6289113e61893f7beefaeb1990a".parse().unwrap()));
-        assert_eq!(txs[2].gas, U256::from(105_000));
+       // ...
 
-        assert_eq!(txs[3].hash, "566413e7a3340390acc6b53ca127559b9893d6111d32c56682a5d2800c720957".parse().unwrap());
-        assert_eq!(txs[3].to, Some("e6408a2dea46696155e4c0a08addd883603667ba".parse().unwrap()));
-        assert_eq!(txs[3].gas, U256::from(420_000));
+        assert_eq!(txs[87].hash, "76da1628c18e0096ed0a24d37adf110ee39fea04c8bed36dfa7065c016f5d4d3".parse().unwrap());
+        assert_eq!(txs[87].to, Some("d2f81cd7a20d60c0d558496c7169a20968389b40".parse().unwrap()));
+        assert_eq!(txs[87].gas, U256::from(36_195));
     }
 
     // eth_getBlockByNumber
@@ -306,23 +303,21 @@ mod tests {
             .expect("query succeeds")
             .expect("block exists");
 
-        assert_eq!(infos.len(), 4);
+        assert_eq!(infos.len(), 88);
 
-        assert_eq!(infos[0].hash, "cf73737e96c964b294ea326bb264d5b752d1f166dc79449e1f59280e47d2c25c".parse().unwrap());
-        assert_eq!(infos[0].to, Some("8746811e33dd09e5652f9953b6721aeec6e582c1".parse().unwrap()));
-        assert_eq!(infos[0].gas_limit, U256::from(60_000));
+        assert_eq!(infos[0].hash, "c68501cb5b3eda0fe845c30864a5657c9cf71d492c78f24b92e3d12986ae705b".parse().unwrap());
+        assert_eq!(infos[0].to, Some("9ff305d9f7692a9b45e4f9bce8be4e98992eddde".parse().unwrap()));
+        assert_eq!(infos[0].gas_limit, U256::from(21_000));
 
-        assert_eq!(infos[1].hash, "2c75bfe16234a411fcc1a16e8b3a18c53578b86acb485006424fa69eb3c6771c".parse().unwrap());
-        assert_eq!(infos[1].to, Some("13893c4e295583faec3c5b6b94bfbb907982de4c".parse().unwrap()));
-        assert_eq!(infos[1].gas_limit, U256::from(250_000));
+        assert_eq!(infos[1].hash, "f9f3be29b6c70e3032a57e141c8374cc7cfb2b4006a640d680411af024b06179".parse().unwrap());
+        assert_eq!(infos[1].to, Some("179631c363eef2cfec04f2354476f7b407ed031d".parse().unwrap()));
+        assert_eq!(infos[1].gas_limit, U256::from(150_000));
 
-        assert_eq!(infos[2].hash, "f5625144499769b109058cf7abf41aef1a4323c875e20b429e7174e5c090f9b4".parse().unwrap());
-        assert_eq!(infos[2].to, Some("9b20dabcec77f6289113e61893f7beefaeb1990a".parse().unwrap()));
-        assert_eq!(infos[2].gas_limit, U256::from(105_000));
+        // ...
 
-        assert_eq!(infos[3].hash, "566413e7a3340390acc6b53ca127559b9893d6111d32c56682a5d2800c720957".parse().unwrap());
-        assert_eq!(infos[3].to, Some("e6408a2dea46696155e4c0a08addd883603667ba".parse().unwrap()));
-        assert_eq!(infos[3].gas_limit, U256::from(420_000));
+        assert_eq!(infos[87].hash, "76da1628c18e0096ed0a24d37adf110ee39fea04c8bed36dfa7065c016f5d4d3".parse().unwrap());
+        assert_eq!(infos[87].to, Some("d2f81cd7a20d60c0d558496c7169a20968389b40".parse().unwrap()));
+        assert_eq!(infos[87].gas_limit, U256::from(36_195));
     }
 
     // eth_getBlockByNumber
@@ -335,12 +330,12 @@ mod tests {
 
         match stream.next().await {
             None => assert!(false),
-            Some(infos) => assert_eq!(infos.len(), 4),
+            Some(infos) => assert_eq!(infos.len(), 88),
         }
 
         match stream.next().await {
             None => assert!(false),
-            Some(infos) => assert_eq!(infos.len(), 6),
+            Some(infos) => assert_eq!(infos.len(), 47),
         }
 
         assert!(stream.next().await.is_none());
