@@ -1,16 +1,13 @@
-#[macro_use]
-extern crate lazy_static;
 extern crate regex;
 extern crate rocksdb;
 extern crate web3;
 
-mod db;
+use common::*;
+
 mod occ;
 mod output_mode;
 mod pairwise;
-mod rpc;
 mod stats;
-mod transaction_info;
 
 use futures::{future, stream, FutureExt, StreamExt};
 use output_mode::OutputMode;
@@ -149,7 +146,7 @@ async fn process_block_aborts(
             num_aborted_txs_in_block += 1;
 
             // TODO: get gas for the whole block?
-            let gas = rpc::gas(web3, &tx_hash[..])
+            let gas = rpc::gas_used(web3, &tx_hash[..])
                 .await
                 .expect(&format!("Unable to retrieve gas (1) {}", tx_hash)[..])
                 .expect(&format!("Unable to retrieve gas (2) {}", tx_hash)[..]);
@@ -332,7 +329,7 @@ async fn main() -> web3::Result<()> {
     let output = OutputMode::from_str(&args[5][..]);
 
     // open db
-    let db = db::open(path);
+    let db = db::open_traces(path);
 
     // check range
     let latest_raw = db

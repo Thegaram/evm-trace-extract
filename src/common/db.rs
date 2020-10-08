@@ -2,15 +2,16 @@ use crate::rpc;
 use crate::transaction_info::{parse_accesses, parse_tx_hash, TransactionInfo};
 use rocksdb::{Options, SliceTransform, DB};
 use std::collections::HashMap;
+use web3::types::{Transaction, TransactionReceipt};
 
-pub fn open(path: &str) -> DB {
+pub fn open_traces(path: &str) -> DB {
     let prefix_extractor = SliceTransform::create_fixed_prefix(8);
 
     let mut opts = Options::default();
     opts.create_if_missing(false);
     opts.set_prefix_extractor(prefix_extractor);
 
-    DB::open(&opts, path).expect("can open db")
+    DB::open(&opts, path).expect("db open should succeed")
 }
 
 // note: this will get tx infos in the wrong order!
@@ -68,4 +69,62 @@ pub fn tx_infos(db: &DB, block: u64, infos: &Vec<rpc::TxInfo>) -> Vec<Transactio
     }
 
     res
+}
+
+pub struct RpcDb {
+    db: DB,
+}
+
+impl RpcDb {
+    pub fn open(path: &str) -> Result<RpcDb, rocksdb::Error> {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        let db = DB::open(&opts, path)?;
+        Ok(RpcDb { db })
+    }
+
+    fn txs_key(block: u64) -> Vec<u8> {
+        format!("{:0>8}-txs", block).as_bytes().to_vec()
+    }
+
+    fn receipts_key(block: u64) -> Vec<u8> {
+        format!("{:0>8}-rec", block).as_bytes().to_vec()
+    }
+
+    pub fn put_txs(&mut self, block: u64, txs: Vec<Transaction>) -> Result<(), rocksdb::Error> {
+        let key = RpcDb::txs_key(block);
+        let value = rmp_serde::to_vec(&txs).expect("serialize should succeed");
+        self.db.put(key, value)
+    }
+
+    pub fn get_txs(&self, block: u64) -> Result<Option<Vec<Transaction>>, rocksdb::Error> {
+        let key = RpcDb::txs_key(block);
+
+        match self.db.get(&key)? {
+            None => Ok(None),
+            Some(raw) => Ok(Some(rmp_serde::from_slice(&raw[..]).unwrap())),
+        }
+    }
+
+    pub fn put_receipts(
+        &mut self,
+        block: u64,
+        receipts: Vec<TransactionReceipt>,
+    ) -> Result<(), rocksdb::Error> {
+        let key = RpcDb::receipts_key(block);
+        let value = rmp_serde::to_vec(&receipts).expect("serialize should succeed");
+        self.db.put(key, value)
+    }
+
+    pub fn get_receipts(
+        &self,
+        block: u64,
+    ) -> Result<Option<Vec<TransactionReceipt>>, rocksdb::Error> {
+        let key = RpcDb::receipts_key(block);
+
+        match self.db.get(&key)? {
+            None => Ok(None),
+            Some(raw) => Ok(Some(rmp_serde::from_slice(&raw[..]).unwrap())),
+        }
+    }
 }
