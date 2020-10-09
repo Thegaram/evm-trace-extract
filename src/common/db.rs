@@ -168,16 +168,21 @@ impl RpcDb {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+    use serial_test::serial;
 
     const BLOCK: u64 = 5232800;
-
-    const DB_PATH: &str = "_rpc_db";
+    const DB_PATH: &str = "experiment/db/_rpc_db";
 
     fn db() -> Result<RpcDb, Error>  {
-        RpcDb::open(DB_PATH)
+        let mut d = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        d.push(DB_PATH);
+        let path = d.into_os_string().into_string().unwrap();
+        RpcDb::open(&path)
     }
 
     #[test]
+    #[serial]
     fn test_block_txs() {
         let db = db().expect("can open db");
 
@@ -203,6 +208,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_tx_infos() {
         let db = db().expect("can open db");
 
@@ -228,6 +234,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_get_receipts() {
         let db = db().expect("can open db");
 
@@ -250,6 +257,7 @@ mod tests {
     }
 
     #[test]
+    #[serial]
     fn test_gas_used() {
         let db = db().expect("can open db");
 
