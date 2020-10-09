@@ -223,28 +223,37 @@ async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: Outp
     }
 
     // stream RPC results
+    // let others = stream::iter(from..=to)
+    //     .map(|b| {
+    //         let web3_clone = web3.clone();
+
+    //         let a = tokio::spawn(async move {
+    //             rpc::gas_parity(&web3_clone, b)
+    //                 .await
+    //                 .expect("parity_getBlockReceipts RPC should succeed")
+    //         });
+
+    //         let web3_clone = web3.clone();
+
+    //         let b = tokio::spawn(async move {
+    //             rpc::tx_infos(&web3_clone, b)
+    //                 .await
+    //                 .expect("eth_getBlock RPC should succeed")
+    //                 .expect("block should exist")
+    //         });
+
+    //         future::join(a, b).map(|(a, b)| (a.expect("future OK"), b.expect("future OK")))
+    //     })
+    //     .buffered(10);
+
+    let rpc_db = db::RpcDb::open("./_rpc_db").expect("db open succeeds");
+
     let others = stream::iter(from..=to)
-        .map(|b| {
-            let web3_clone = web3.clone();
-
-            let a = tokio::spawn(async move {
-                rpc::gas_parity(&web3_clone, b)
-                    .await
-                    .expect("parity_getBlockReceipts RPC should succeed")
-            });
-
-            let web3_clone = web3.clone();
-
-            let b = tokio::spawn(async move {
-                rpc::tx_infos(&web3_clone, b)
-                    .await
-                    .expect("eth_getBlock RPC should succeed")
-                    .expect("block should exist")
-            });
-
-            future::join(a, b).map(|(a, b)| (a.expect("future OK"), b.expect("future OK")))
-        })
-        .buffered(10);
+        .map(|block| {
+            let gas = rpc_db.gas_used(block).expect("get from db succeeds").expect("block exists in db");
+            let info = rpc_db.tx_infos(block).expect("get from db succeeds").expect("block exists in db");
+            (gas, info)
+        });
 
     let blocks = stream::iter(from..=to);
     let mut it = blocks.zip(others);

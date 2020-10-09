@@ -71,12 +71,6 @@ pub fn tx_infos(db: &DB, block: u64, infos: &Vec<rpc::TxInfo>) -> Vec<Transactio
     res
 }
 
-pub struct TxInfo {
-    pub hash: H256,
-    pub to: Option<H160>,
-    pub gas_limit: U256,
-}
-
 pub struct RpcDb {
     db: DB,
 }
@@ -112,7 +106,7 @@ impl RpcDb {
         }
     }
 
-    pub fn tx_infos(&self, block: u64) -> Result<Option<Vec<TxInfo>>, Error> {
+    pub fn tx_infos(&self, block: u64) -> Result<Option<Vec<rpc::TxInfo>>, Error> {
         let txs = match self.get_txs(block)? {
             None => return Ok(None),
             Some(txs) => txs,
@@ -120,7 +114,7 @@ impl RpcDb {
 
         let infos = txs
             .into_iter()
-            .map(|tx| TxInfo {
+            .map(|tx| rpc::TxInfo {
                 hash: tx.hash,
                 to: tx.to,
                 gas_limit: tx.gas,
