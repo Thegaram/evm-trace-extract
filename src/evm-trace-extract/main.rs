@@ -9,7 +9,7 @@ mod output_mode;
 mod pairwise;
 mod stats;
 
-use futures::{future, stream, FutureExt, StreamExt};
+use futures::{stream, StreamExt};
 use output_mode::OutputMode;
 use rocksdb::DB;
 use std::collections::{HashMap, HashSet};
@@ -216,7 +216,7 @@ async fn process_aborts(db: &DB, web3: &Web3, blocks: impl Iterator<Item = u64>,
     // }
 }
 
-async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: OutputMode) {
+async fn occ_detailed_stats(db: &DB, _web3: &Web3, from: u64, to: u64, mode: OutputMode) {
     // print csv header if necessary
     if mode == OutputMode::Csv {
         println!("block,num_txs,num_aborted,serial_gas_cost,pool_t_2_q_0,pool_t_4_q_0,pool_t_8_q_0,pool_t_16_q_0,pool_t_all_q_0,pool_t_2_q_2,pool_t_4_q_2,pool_t_8_q_2,pool_t_16_q_2,pool_t_all_q_2,");
@@ -248,12 +248,19 @@ async fn occ_detailed_stats(db: &DB, web3: &Web3, from: u64, to: u64, mode: Outp
 
     let rpc_db = db::RpcDb::open("./_rpc_db").expect("db open succeeds");
 
-    let others = stream::iter(from..=to)
-        .map(|block| {
-            let gas = rpc_db.gas_used(block).expect("get from db succeeds").expect("block exists in db");
-            let info = rpc_db.tx_infos(block).expect("get from db succeeds").expect("block exists in db");
-            (gas, info)
-        });
+    let others = stream::iter(from..=to).map(|block| {
+        let gas = rpc_db
+            .gas_used(block)
+            .expect("get from db succeeds")
+            .expect("block exists in db");
+
+        let info = rpc_db
+            .tx_infos(block)
+            .expect("get from db succeeds")
+            .expect("block exists in db");
+
+        (gas, info)
+    });
 
     let blocks = stream::iter(from..=to);
     let mut it = blocks.zip(others);

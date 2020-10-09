@@ -2,7 +2,7 @@ use crate::rpc;
 use crate::transaction_info::{parse_accesses, parse_tx_hash, TransactionInfo};
 use rocksdb::{Error, Options, SliceTransform, DB};
 use std::collections::HashMap;
-use web3::types::{Transaction, TransactionReceipt, H160, H256, U256};
+use web3::types::{Transaction, TransactionReceipt, U256};
 
 pub fn open_traces(path: &str) -> DB {
     let prefix_extractor = SliceTransform::create_fixed_prefix(8);
