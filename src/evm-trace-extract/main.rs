@@ -219,7 +219,7 @@ async fn process_aborts(db: &DB, web3: &Web3, blocks: impl Iterator<Item = u64>,
 async fn occ_detailed_stats(db: &DB, _web3: &Web3, from: u64, to: u64, mode: OutputMode) {
     // print csv header if necessary
     if mode == OutputMode::Csv {
-        println!("block,num_txs,num_aborted,serial_gas_cost,pool_t_2_q_0,pool_t_4_q_0,pool_t_8_q_0,pool_t_16_q_0,pool_t_all_q_0,pool_t_2_q_2,pool_t_4_q_2,pool_t_8_q_2,pool_t_16_q_2,pool_t_all_q_2,");
+        println!("block,num_txs,num_aborted,serial_gas_cost,pool_t_2,pool_t_4,pool_t_8,pool_t_16,pool_t_all");
     }
 
     // stream RPC results
@@ -276,32 +276,17 @@ async fn occ_detailed_stats(db: &DB, _web3: &Web3, from: u64, to: u64, mode: Out
         let num_txs = txs.len();
         let num_aborted = occ::num_aborts(&txs);
 
-        let simulate = |num_threads, max_queued_per_thread, min_gas_for_queue| {
-            occ::thread_pool(
-                &txs,
-                &gas,
-                &info,
-                num_threads,
-                max_queued_per_thread,
-                min_gas_for_queue,
-            )
-        };
+        let simulate = |num_threads| occ::thread_pool(&txs, &gas, &info, num_threads);
 
-        let pool_t_2_q_0 = simulate(2, 0, std::u64::MAX.into());
-        let pool_t_4_q_0 = simulate(4, 0, std::u64::MAX.into());
-        let pool_t_8_q_0 = simulate(8, 0, std::u64::MAX.into());
-        let pool_t_16_q_0 = simulate(16, 0, std::u64::MAX.into());
-        let pool_t_all_q_0 = simulate(txs.len(), 0, std::u64::MAX.into());
-
-        let pool_t_2_q_2 = simulate(2, 2, 100_000.into());
-        let pool_t_4_q_2 = simulate(4, 2, 100_000.into());
-        let pool_t_8_q_2 = simulate(8, 2, 100_000.into());
-        let pool_t_16_q_2 = simulate(16, 2, 100_000.into());
-        let pool_t_all_q_2 = simulate(txs.len(), 2, 100_000.into());
+        let pool_t_2_q_0 = simulate(2);
+        let pool_t_4_q_0 = simulate(4);
+        let pool_t_8_q_0 = simulate(8);
+        let pool_t_16_q_0 = simulate(16);
+        let pool_t_all_q_0 = simulate(txs.len());
 
         if mode == OutputMode::Csv {
             println!(
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{}",
                 block,
                 num_txs,
                 num_aborted,
@@ -311,11 +296,6 @@ async fn occ_detailed_stats(db: &DB, _web3: &Web3, from: u64, to: u64, mode: Out
                 pool_t_8_q_0,
                 pool_t_16_q_0,
                 pool_t_all_q_0,
-                pool_t_2_q_2,
-                pool_t_4_q_2,
-                pool_t_8_q_2,
-                pool_t_16_q_2,
-                pool_t_all_q_2,
             );
         }
     }

@@ -158,10 +158,8 @@ pub fn batches(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, batch_size: usize) -
 pub fn thread_pool(
     txs: &Vec<TransactionInfo>,
     gas: &Vec<U256>,
-    info: &Vec<rpc::TxInfo>,
+    _info: &Vec<rpc::TxInfo>,
     num_threads: usize,
-    max_queued_per_thread: usize,
-    min_gas_for_queue: U256,
 ) -> U256 {
     assert_eq!(txs.len(), gas.len());
 
@@ -177,11 +175,6 @@ pub fn thread_pool(
     // item: <transaction-id>
     // pop() always returns the lowest transaction-id
     let mut tx_queue: MinHeap<usize> = (0..txs.len()).map(Reverse).collect();
-
-    // per thread transaction queue: transactions schedule for specific threads waiting to be executed
-    // item in each queue: <transaction-id>
-    // pop() always returns the lowest transaction-id
-    let mut per_thread_tx_queue: Vec<MinHeap<usize>> = vec![Default::default(); num_threads];
 
     // commit queue: txs that finished execution and are waiting to commit
     // item: <transaction-id, storage-version>
@@ -201,9 +194,31 @@ pub fn thread_pool(
 
     // let mut num_iteration = 0;
 
+    let is_wr_conflict = |running: usize, to_schedule: usize| {
+        for acc in txs[to_schedule]
+            .accesses
+            .iter()
+            .filter(|a| a.mode == AccessMode::Read)
+        {
+            if let Target::Storage(addr, entry) = &acc.target {
+                if txs[running]
+                    .accesses
+                    .contains(&Access::storage_write(addr, entry))
+                {
+                    return true;
+                }
+            }
+        }
+
+        false
+    };
+
     loop {
-        // exit condition: we have committed all transactions
+        // println!("\n");
+
+        // ---------------- exit condition ----------------
         if next_to_commit == txs.len() {
+            // we have committed all transactions
             // nothing left to execute or commit
             assert!(tx_queue.is_empty(), "tx queue not empty");
             assert!(commit_queue.is_empty(), "commit queue not empty");
@@ -217,72 +232,83 @@ pub fn thread_pool(
             break;
         }
 
-        // scheduling: run transactions on idle threads
-        let idle_threads = threads
-            .iter()
-            .enumerate()
-            .filter(|(_, opt)| opt.is_none())
-            .map(|(id, _)| id)
-            .collect::<Vec<_>>();
+        // ---------------- scheduling ----------------
+        // println!("[{}] threads before scheduling: {:?}", num_iteration, threads);
+        // println!("[{}] tx queue before scheduling: {:?}", num_iteration, tx_queue);
+        // println!("[{}] commit queue before scheduling: {:?}", num_iteration, commit_queue);
+        // println!("[{}] next_to_commit before scheduling: {:?}", num_iteration, next_to_commit);
 
-        for thread_id in idle_threads {
-            // try to schedule from its own queue first
-            if let Some(Reverse(tx_id)) = per_thread_tx_queue[thread_id].pop() {
-                let gas_left = gas[tx_id];
-                let sv = next_to_commit as i32 - 1;
-                threads[thread_id] = Some((tx_id, gas_left, sv));
-                continue;
-            }
+        let mut reinsert = HashSet::new();
 
-            'assign_to_thread: loop {
-                // otherwise, get tx from tx_queue
-                let tx_id = match tx_queue.pop() {
-                    Some(Reverse(id)) => id,
-                    None => break,
+        'schedule: loop {
+            // get tx from tx_queue
+            let tx_id = match tx_queue.pop() {
+                Some(Reverse(id)) => id,
+                None => break,
+            };
+
+            // println!("[{}] attempting to schedule tx-{}...", num_iteration, tx_id);
+
+            // check running txs for conflicts
+            for thread_id in 0..threads.len() {
+                let (running_tx, _, _) = match &threads[thread_id] {
+                    None => continue,
+                    Some(x) => x,
                 };
 
-                // cheap transactions are scheduled directly on the current thread
-                if info[tx_id].gas_limit < min_gas_for_queue {
+                assert!(tx_id != *running_tx);
+
+                // case 1:
+                // e.g., tx-3 is running, we're scheduling tx-5
+                //       tx-5 reads from tx-3 => do not run yet
+                if *running_tx < tx_id && is_wr_conflict(*running_tx, tx_id) {
+                    // println!("[{}] wr conflict between tx-{} [running] and tx-{} [to be scheduled], postponing tx-{}", num_iteration, *running_tx, tx_id, tx_id);
+                    reinsert.insert(tx_id);
+                    continue 'schedule;
+                }
+                // case 2:
+                // e.g., tx-5 is running, we're scheduling tx-3
+                //       tx-5 reads from tx-3 => replace tx-5 with tx-3
+                else if tx_id < *running_tx && is_wr_conflict(tx_id, *running_tx) {
+                    // println!("[{}] wr conflict between tx-{} [running] and tx-{} [to be scheduled], replacing tx-{} with tx-{}", num_iteration, *running_tx, tx_id, *running_tx, tx_id);
+
+                    reinsert.insert(*running_tx);
+
+                    // overwrite
                     let gas_left = gas[tx_id];
                     let sv = next_to_commit as i32 - 1;
                     threads[thread_id] = Some((tx_id, gas_left, sv));
-                    break;
+
+                    continue 'schedule;
                 }
-
-                // check if there's any potentially conflicting tx running
-                let receiver_matches =
-                    |info0: &rpc::TxInfo, info1: &rpc::TxInfo| match (info0.to, info1.to) {
-                        (Some(to0), Some(to1)) => to0 == to1,
-                        _ => false,
-                    };
-
-                let conflicting_threads = threads
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, opt)| opt.is_some())
-                    .map(|(thread_id, opt)| (thread_id, opt.unwrap()))
-                    .filter(|(_, (other_tx, _, _))| {
-                        receiver_matches(&info[tx_id], &info[*other_tx])
-                    })
-                    .map(|(thread_id, _)| thread_id);
-
-                // and add this tx to the corresponding thread's queue
-                for other_thread in conflicting_threads {
-                    if per_thread_tx_queue[other_thread].len() < max_queued_per_thread {
-                        per_thread_tx_queue[other_thread].push(Reverse(tx_id));
-                        continue 'assign_to_thread;
-                    }
-                }
-
-                // if there are no conflicting transactions running or all threads'
-                // queues are full, we schedule the current transaction directly
-                let gas_left = gas[tx_id];
-                let sv = next_to_commit as i32 - 1;
-                threads[thread_id] = Some((tx_id, gas_left, sv));
-                break;
             }
+
+            // schedule on the first idle thread
+            for thread_id in 0..threads.len() {
+                if threads[thread_id].is_none() {
+                    // println!("[{}] scheduling tx-{} on thread-{}", num_iteration, tx_id, thread_id);
+
+                    let gas_left = gas[tx_id];
+                    let sv = next_to_commit as i32 - 1;
+                    threads[thread_id] = Some((tx_id, gas_left, sv));
+                    continue 'schedule;
+                }
+            }
+
+            reinsert.insert(tx_id);
+            break;
         }
 
+        // reschedule txs for later
+        // println!("[{}] reinserting {:?} into tx queue", num_iteration, reinsert);
+
+        for tx_id in reinsert {
+            tx_queue.push(Reverse(tx_id));
+        }
+
+        // println!("[{}] threads after scheduling: {:?}", num_iteration, threads);
+
+        // ---------------- execution ----------------
         // find transaction that finishes execution next
         let (thread_id, (tx_id, gas_step, sv)) = threads
             .iter()
@@ -303,7 +329,7 @@ pub fn thread_pool(
             }
         }
 
-        // process commits/aborts
+        // ---------------- commit / abort ----------------
         while let Some(Reverse((tx_id, _))) = commit_queue.peek() {
             // we must commit transactions in order
             if *tx_id != next_to_commit {
@@ -345,6 +371,8 @@ pub fn thread_pool(
             // re-schedule aborted tx
             tx_queue.push(Reverse(tx_id));
         }
+
+        // num_iteration += 1;
     }
 
     cost
