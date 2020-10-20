@@ -213,6 +213,8 @@ pub fn thread_pool(
         false
     };
 
+    log::trace!("-----------------------------------------");
+
     loop {
         // ---------------- exit condition ----------------
         if next_to_commit == txs.len() {
@@ -234,6 +236,7 @@ pub fn thread_pool(
         log::trace!("");
         log::trace!("[{}] threads before scheduling: {:?}", num_iteration, threads);
         log::trace!("[{}] tx queue before scheduling: {:?}", num_iteration, tx_queue);
+        log::trace!("[{}] commit queue before scheduling: {:?}", num_iteration, commit_queue);
 
         let mut reinsert = HashSet::new();
 
@@ -250,6 +253,23 @@ pub fn thread_pool(
             };
 
             log::trace!("[{}] attempting to schedule tx-{}...", num_iteration, tx_id);
+
+            // check executed txs for conflicts
+            for Reverse((executed_tx, _)) in &commit_queue {
+                // case 1:
+                // e.g., tx-3 is waiting to be committed, we're scheduling tx-5
+                //       tx-5 reads from tx-3 => do not run yet
+                if *executed_tx < tx_id && is_wr_conflict(*executed_tx, tx_id) {
+                    log::trace!("[{}] wr conflict between tx-{} [executed] and tx-{} [to be scheduled], postponing tx-{}", num_iteration, *executed_tx, tx_id, tx_id);
+                    reinsert.insert(tx_id);
+                    continue 'schedule;
+                }
+
+                // case 2:
+                // e.g., tx-5 is waiting to be committed, we're scheduling tx-3
+                //       tx-5 reads from tx-3 => tx-5 should be invalidated
+                // TODO
+            }
 
             // check running txs for conflicts
             for thread_id in 0..threads.len() {
@@ -388,7 +408,10 @@ pub fn thread_pool(
         }
 
         num_iteration += 1;
+        log::trace!("[{}] cost so far: {}", num_iteration, cost);
     }
+
+    log::trace!("-----------------------------------------");
 
     cost
 }
