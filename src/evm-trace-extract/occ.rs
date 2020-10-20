@@ -192,7 +192,7 @@ pub fn thread_pool(
     // overall cost of execution
     let mut cost = U256::from(0);
 
-    // let mut num_iteration = 0;
+    let mut num_iteration = 0;
 
     let is_wr_conflict = |running: usize, to_schedule: usize| {
         for acc in txs[to_schedule]
@@ -214,8 +214,6 @@ pub fn thread_pool(
     };
 
     loop {
-        // println!("\n");
-
         // ---------------- exit condition ----------------
         if next_to_commit == txs.len() {
             // we have committed all transactions
@@ -233,21 +231,25 @@ pub fn thread_pool(
         }
 
         // ---------------- scheduling ----------------
-        // println!("[{}] threads before scheduling: {:?}", num_iteration, threads);
-        // println!("[{}] tx queue before scheduling: {:?}", num_iteration, tx_queue);
-        // println!("[{}] commit queue before scheduling: {:?}", num_iteration, commit_queue);
-        // println!("[{}] next_to_commit before scheduling: {:?}", num_iteration, next_to_commit);
+        log::trace!("");
+        log::trace!("[{}] threads before scheduling: {:?}", num_iteration, threads);
+        log::trace!("[{}] tx queue before scheduling: {:?}", num_iteration, tx_queue);
 
         let mut reinsert = HashSet::new();
 
         'schedule: loop {
+            // check if there are any idle threads
+            if !threads.iter().any(Option::is_none) {
+                break 'schedule;
+            }
+
             // get tx from tx_queue
             let tx_id = match tx_queue.pop() {
                 Some(Reverse(id)) => id,
                 None => break,
             };
 
-            // println!("[{}] attempting to schedule tx-{}...", num_iteration, tx_id);
+            log::trace!("[{}] attempting to schedule tx-{}...", num_iteration, tx_id);
 
             // check running txs for conflicts
             for thread_id in 0..threads.len() {
@@ -262,7 +264,7 @@ pub fn thread_pool(
                 // e.g., tx-3 is running, we're scheduling tx-5
                 //       tx-5 reads from tx-3 => do not run yet
                 if *running_tx < tx_id && is_wr_conflict(*running_tx, tx_id) {
-                    // println!("[{}] wr conflict between tx-{} [running] and tx-{} [to be scheduled], postponing tx-{}", num_iteration, *running_tx, tx_id, tx_id);
+                    log::trace!("[{}] wr conflict between tx-{} [running] and tx-{} [to be scheduled], postponing tx-{}", num_iteration, *running_tx, tx_id, tx_id);
                     reinsert.insert(tx_id);
                     continue 'schedule;
                 }
@@ -270,7 +272,7 @@ pub fn thread_pool(
                 // e.g., tx-5 is running, we're scheduling tx-3
                 //       tx-5 reads from tx-3 => replace tx-5 with tx-3
                 else if tx_id < *running_tx && is_wr_conflict(tx_id, *running_tx) {
-                    // println!("[{}] wr conflict between tx-{} [running] and tx-{} [to be scheduled], replacing tx-{} with tx-{}", num_iteration, *running_tx, tx_id, *running_tx, tx_id);
+                    log::trace!("[{}] wr conflict between tx-{} [running] and tx-{} [to be scheduled], replacing tx-{} with tx-{}", num_iteration, *running_tx, tx_id, *running_tx, tx_id);
 
                     reinsert.insert(*running_tx);
 
@@ -286,7 +288,7 @@ pub fn thread_pool(
             // schedule on the first idle thread
             for thread_id in 0..threads.len() {
                 if threads[thread_id].is_none() {
-                    // println!("[{}] scheduling tx-{} on thread-{}", num_iteration, tx_id, thread_id);
+                    log::trace!("[{}] scheduling tx-{} on thread-{}", num_iteration, tx_id, thread_id);
 
                     let gas_left = gas[tx_id];
                     let sv = next_to_commit as i32 - 1;
@@ -295,18 +297,19 @@ pub fn thread_pool(
                 }
             }
 
-            reinsert.insert(tx_id);
-            break;
+            assert!(false, "should find idle thread");
         }
 
         // reschedule txs for later
-        // println!("[{}] reinserting {:?} into tx queue", num_iteration, reinsert);
+        if !reinsert.is_empty() {
+            log::trace!("[{}] reinserting {:?} into tx queue", num_iteration, reinsert);
+        }
 
         for tx_id in reinsert {
             tx_queue.push(Reverse(tx_id));
         }
 
-        // println!("[{}] threads after scheduling: {:?}", num_iteration, threads);
+        log::trace!("[{}] threads after scheduling: {:?}", num_iteration, threads);
 
         // ---------------- execution ----------------
         // find transaction that finishes execution next
@@ -317,6 +320,8 @@ pub fn thread_pool(
             .map(|(id, opt)| (id, opt.unwrap()))
             .min_by_key(|(_, (_, gas_left, _))| *gas_left)
             .expect("not all threads are idle");
+
+        log::trace!("[{}] executing tx-{} on thread-{} (step = {})", num_iteration, tx_id, thread_id, gas_step);
 
         // finish executing tx, update thread states
         threads[thread_id] = None;
@@ -329,10 +334,18 @@ pub fn thread_pool(
             }
         }
 
+        log::trace!("[{}] threads after execution: {:?}", num_iteration, threads);
+
         // ---------------- commit / abort ----------------
-        while let Some(Reverse((tx_id, _))) = commit_queue.peek() {
+        log::trace!("[{}] commit queue before committing: {:?}", num_iteration, commit_queue);
+        log::trace!("[{}] next_to_commit before committing: {:?}", num_iteration, next_to_commit);
+
+        while let Some(Reverse((tx_id, sv))) = commit_queue.peek() {
+            log::trace!("[{}] attempting to commit tx-{} (sv = {})...", num_iteration, tx_id, sv);
+
             // we must commit transactions in order
             if *tx_id != next_to_commit {
+                log::trace!("[{}] unable to commit tx-{}: next to commit is tx-{}", num_iteration, tx_id, next_to_commit);
                 assert!(*tx_id > next_to_commit);
                 break;
             }
@@ -354,6 +367,7 @@ pub fn thread_pool(
                     if let Target::Storage(addr, entry) = &acc.target {
                         if concurrent.contains(&Access::storage_write(addr, entry)) {
                             if !ignored_slots.contains(&format!("{}-{}", addr, entry)[..]) {
+                                log::trace!("[{}] wr conflict between tx-{} [committed] and tx-{} [to be committed], ABORT tx-{}", num_iteration, prev_tx, tx_id, tx_id);
                                 aborted = true;
                                 break 'outer;
                             }
@@ -364,6 +378,7 @@ pub fn thread_pool(
 
             // commit transaction
             if !aborted {
+                log::trace!("[{}] COMMIT tx-{}", num_iteration, tx_id);
                 next_to_commit += 1;
                 continue;
             }
@@ -372,7 +387,7 @@ pub fn thread_pool(
             tx_queue.push(Reverse(tx_id));
         }
 
-        // num_iteration += 1;
+        num_iteration += 1;
     }
 
     cost

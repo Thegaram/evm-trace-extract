@@ -303,6 +303,12 @@ async fn occ_detailed_stats(db: &DB, _web3: &Web3, from: u64, to: u64, mode: Out
 
 #[tokio::main]
 async fn main() -> web3::Result<()> {
+    env_logger::builder()
+        .format_timestamp(None)
+        .format_level(false)
+        .format_module_path(false)
+        .init();
+
     let transport = web3::transports::Http::new("http://localhost:8545")?;
     let web3 = web3::Web3::new(transport);
 
