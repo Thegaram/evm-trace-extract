@@ -205,6 +205,7 @@ pub fn thread_pool(
                     .accesses
                     .contains(&Access::storage_write(addr, entry))
                 {
+                    log::trace!("XXX: tx-{}/tx-{} rw conflict on {}-{}", running, to_schedule, addr, entry);
                     return true;
                 }
             }
@@ -252,7 +253,7 @@ pub fn thread_pool(
                 None => break,
             };
 
-            log::trace!("[{}] attempting to schedule tx-{}...", num_iteration, tx_id);
+            log::trace!("[{}] attempting to schedule tx-{} ({})...", num_iteration, tx_id, &txs[tx_id].tx_hash[0..8]);
 
             // check executed txs for conflicts
             // for Reverse((executed_tx, _)) in &commit_queue {
@@ -284,7 +285,7 @@ pub fn thread_pool(
                 // e.g., tx-3 is running, we're scheduling tx-5
                 //       tx-5 reads from tx-3 => do not run yet
                 if *running_tx < tx_id && is_wr_conflict(*running_tx, tx_id) {
-                    log::trace!("[{}] wr conflict between tx-{} [running] and tx-{} [to be scheduled], postponing tx-{}", num_iteration, *running_tx, tx_id, tx_id);
+                    log::trace!("[{}] wr conflict between tx-{} ({}) [running] and tx-{} ({}) [to be scheduled], postponing tx-{}", num_iteration, *running_tx, &txs[*running_tx].tx_hash[0..8], tx_id, &txs[tx_id].tx_hash[0..8], tx_id);
                     reinsert.insert(tx_id);
                     continue 'schedule;
                 }
@@ -292,7 +293,7 @@ pub fn thread_pool(
                 // e.g., tx-5 is running, we're scheduling tx-3
                 //       tx-5 reads from tx-3 => replace tx-5 with tx-3
                 else if tx_id < *running_tx && is_wr_conflict(tx_id, *running_tx) {
-                    log::trace!("[{}] wr conflict between tx-{} [running] and tx-{} [to be scheduled], replacing tx-{} with tx-{}", num_iteration, *running_tx, tx_id, *running_tx, tx_id);
+                    log::trace!("[{}] wr conflict between tx-{} ({}) [running] and tx-{} ({}) [to be scheduled], replacing tx-{} with tx-{}", num_iteration, *running_tx, &txs[*running_tx].tx_hash[0..8], tx_id, &txs[tx_id].tx_hash[0..8], *running_tx, tx_id);
 
                     reinsert.insert(*running_tx);
 
@@ -316,7 +317,7 @@ pub fn thread_pool(
             // schedule on the first idle thread
             for thread_id in 0..threads.len() {
                 if threads[thread_id].is_none() {
-                    log::trace!("[{}] scheduling tx-{} on thread-{}", num_iteration, tx_id, thread_id);
+                    log::trace!("[{}] scheduling tx-{} ({}) on thread-{}", num_iteration, tx_id, &txs[tx_id].tx_hash[0..8], thread_id);
 
                     let gas_left = gas[tx_id];
                     let sv = next_to_commit as i32 - 1;
@@ -357,7 +358,7 @@ pub fn thread_pool(
             .min_by_key(|(_, (_, gas_left, _, _))| *gas_left)
             .expect("not all threads are idle");
 
-        log::trace!("[{}] executing tx-{} on thread-{} (step = {})", num_iteration, tx_id, thread_id, gas_step);
+        log::trace!("[{}] executing tx-{} ({}) on thread-{} (step = {})", num_iteration, tx_id, &txs[tx_id].tx_hash[0..8], thread_id, gas_step);
 
         // finish executing tx, update thread states
         threads[thread_id] = None;
@@ -377,11 +378,11 @@ pub fn thread_pool(
         log::trace!("[{}] next_to_commit before committing: {:?}", num_iteration, next_to_commit);
 
         while let Some(Reverse((tx_id, sv, _))) = commit_queue.peek() {
-            log::trace!("[{}] attempting to commit tx-{} (sv = {})...", num_iteration, tx_id, sv);
+            log::trace!("[{}] attempting to commit tx-{} ({}, sv = {})...", num_iteration, tx_id, &txs[*tx_id].tx_hash[0..8], sv);
 
             // we must commit transactions in order
             if *tx_id != next_to_commit {
-                log::trace!("[{}] unable to commit tx-{}: next to commit is tx-{}", num_iteration, tx_id, next_to_commit);
+                log::trace!("[{}] unable to commit tx-{} ({}): next to commit is tx-{} ({})", num_iteration, tx_id, &txs[*tx_id].tx_hash[0..8], next_to_commit, &txs[next_to_commit].tx_hash[0..8]);
                 assert!(*tx_id > next_to_commit);
                 break;
             }
@@ -407,11 +408,11 @@ pub fn thread_pool(
                             }
 
                             if seen.contains(&prev_tx) {
-                                log::trace!("[{}] not aborting: tx-{} [to be committed] has seen tx-{} [then uncommitted]", num_iteration, tx_id, prev_tx);
+                                log::trace!("[{}] not aborting: tx-{} ({}) [to be committed] has seen tx-{} ({}) [then uncommitted]", num_iteration, tx_id, &txs[tx_id].tx_hash[0..8], prev_tx, &txs[prev_tx].tx_hash[0..8]);
                                 continue;
                             }
 
-                            log::trace!("[{}] wr conflict between tx-{} [committed] and tx-{} [to be committed], ABORT tx-{}", num_iteration, prev_tx, tx_id, tx_id);
+                            log::trace!("[{}] wr conflict between tx-{} ({}) [committed] and tx-{} ({}) [to be committed], ABORT tx-{}", num_iteration, prev_tx, &txs[prev_tx].tx_hash[0..8], tx_id, &txs[tx_id].tx_hash[0..8], tx_id);
                             aborted = true;
                             break 'outer;
                         }
@@ -421,7 +422,7 @@ pub fn thread_pool(
 
             // commit transaction
             if !aborted {
-                log::trace!("[{}] COMMIT tx-{}", num_iteration, tx_id);
+                log::trace!("[{}] COMMIT tx-{} ({})", num_iteration, tx_id, &txs[tx_id].tx_hash[0..8]);
                 next_to_commit += 1;
                 continue;
             }
