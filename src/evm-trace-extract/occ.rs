@@ -177,17 +177,17 @@ pub fn thread_pool(
     let mut tx_queue: MinHeap<usize> = (0..txs.len()).map(Reverse).collect();
 
     // commit queue: txs that finished execution and are waiting to commit
-    // item: <transaction-id, storage-version>
+    // item: <transaction-id, storage-version, seen-set>
     // pop() always returns the lowest transaction-id
     // storage-version is the highest committed transaction-id before the tx's execution started
-    let mut commit_queue: MinHeap<(usize, i32)> = Default::default();
+    let mut commit_queue: MinHeap<(usize, i32, Vec<usize>)> = Default::default();
 
     // next transaction-id to commit
     let mut next_to_commit = 0;
 
     // thread pool: information on current execution on each thread
-    // item: <transaction-id, gas-left, storage-version> or None if idle
-    let mut threads: Vec<Option<(usize, U256, i32)>> = vec![None; num_threads];
+    // item: <transaction-id, gas-left, storage-version, seen-set> or None if idle
+    let mut threads: Vec<Option<(usize, U256, i32, Vec<usize>)>> = vec![None; num_threads];
 
     // overall cost of execution
     let mut cost = U256::from(0);
@@ -255,25 +255,25 @@ pub fn thread_pool(
             log::trace!("[{}] attempting to schedule tx-{}...", num_iteration, tx_id);
 
             // check executed txs for conflicts
-            for Reverse((executed_tx, _)) in &commit_queue {
-                // case 1:
-                // e.g., tx-3 is waiting to be committed, we're scheduling tx-5
-                //       tx-5 reads from tx-3 => do not run yet
-                if *executed_tx < tx_id && is_wr_conflict(*executed_tx, tx_id) {
-                    log::trace!("[{}] wr conflict between tx-{} [executed] and tx-{} [to be scheduled], postponing tx-{}", num_iteration, *executed_tx, tx_id, tx_id);
-                    reinsert.insert(tx_id);
-                    continue 'schedule;
-                }
+            // for Reverse((executed_tx, _)) in &commit_queue {
+            //     // case 1:
+            //     // e.g., tx-3 is waiting to be committed, we're scheduling tx-5
+            //     //       tx-5 reads from tx-3 => do not run yet
+            //     if *executed_tx < tx_id && is_wr_conflict(*executed_tx, tx_id) {
+            //         log::trace!("[{}] wr conflict between tx-{} [executed] and tx-{} [to be scheduled], postponing tx-{}", num_iteration, *executed_tx, tx_id, tx_id);
+            //         reinsert.insert(tx_id);
+            //         continue 'schedule;
+            //     }
 
-                // case 2:
-                // e.g., tx-5 is waiting to be committed, we're scheduling tx-3
-                //       tx-5 reads from tx-3 => tx-5 should be invalidated
-                // TODO
-            }
+            //     // case 2:
+            //     // e.g., tx-5 is waiting to be committed, we're scheduling tx-3
+            //     //       tx-5 reads from tx-3 => tx-5 should be invalidated
+            //     // TODO
+            // }
 
             // check running txs for conflicts
             for thread_id in 0..threads.len() {
-                let (running_tx, _, _) = match &threads[thread_id] {
+                let (running_tx, ..) = match &threads[thread_id] {
                     None => continue,
                     Some(x) => x,
                 };
@@ -299,7 +299,15 @@ pub fn thread_pool(
                     // overwrite
                     let gas_left = gas[tx_id];
                     let sv = next_to_commit as i32 - 1;
-                    threads[thread_id] = Some((tx_id, gas_left, sv));
+
+                    let seen = commit_queue
+                        .iter()
+                        .map(|Reverse((id, ..))| id)
+                        .cloned()
+                        .filter(|id| *id < tx_id)
+                        .collect::<Vec<usize>>();
+
+                    threads[thread_id] = Some((tx_id, gas_left, sv, seen));
 
                     continue 'schedule;
                 }
@@ -312,7 +320,15 @@ pub fn thread_pool(
 
                     let gas_left = gas[tx_id];
                     let sv = next_to_commit as i32 - 1;
-                    threads[thread_id] = Some((tx_id, gas_left, sv));
+
+                    let seen = commit_queue
+                        .iter()
+                        .map(|Reverse((id, ..))| id)
+                        .cloned()
+                        .filter(|id| *id < tx_id)
+                        .collect::<Vec<usize>>();
+
+                    threads[thread_id] = Some((tx_id, gas_left, sv, seen));
                     continue 'schedule;
                 }
             }
@@ -333,23 +349,23 @@ pub fn thread_pool(
 
         // ---------------- execution ----------------
         // find transaction that finishes execution next
-        let (thread_id, (tx_id, gas_step, sv)) = threads
+        let (thread_id, (tx_id, gas_step, sv, seen)) = threads
             .iter()
             .enumerate()
             .filter(|(_, opt)| opt.is_some())
-            .map(|(id, opt)| (id, opt.unwrap()))
-            .min_by_key(|(_, (_, gas_left, _))| *gas_left)
+            .map(|(id, opt)| (id, opt.clone().unwrap()))
+            .min_by_key(|(_, (_, gas_left, _, _))| *gas_left)
             .expect("not all threads are idle");
 
         log::trace!("[{}] executing tx-{} on thread-{} (step = {})", num_iteration, tx_id, thread_id, gas_step);
 
         // finish executing tx, update thread states
         threads[thread_id] = None;
-        commit_queue.push(Reverse((tx_id, sv)));
+        commit_queue.push(Reverse((tx_id, sv, seen)));
         cost += gas_step;
 
         for ii in 0..threads.len() {
-            if let Some((_, gas_left, _)) = &mut threads[ii] {
+            if let Some((_, gas_left, _, _)) = &mut threads[ii] {
                 *gas_left -= gas_step;
             }
         }
@@ -360,7 +376,7 @@ pub fn thread_pool(
         log::trace!("[{}] commit queue before committing: {:?}", num_iteration, commit_queue);
         log::trace!("[{}] next_to_commit before committing: {:?}", num_iteration, next_to_commit);
 
-        while let Some(Reverse((tx_id, sv))) = commit_queue.peek() {
+        while let Some(Reverse((tx_id, sv, _))) = commit_queue.peek() {
             log::trace!("[{}] attempting to commit tx-{} (sv = {})...", num_iteration, tx_id, sv);
 
             // we must commit transactions in order
@@ -370,7 +386,7 @@ pub fn thread_pool(
                 break;
             }
 
-            let Reverse((tx_id, sv)) = commit_queue.pop().unwrap();
+            let Reverse((tx_id, sv, seen)) = commit_queue.pop().unwrap();
 
             // check all potentially conflicting transactions
             // e.g. if tx-3 was executed with sv = -1, it means that it cannot see writes by tx-0, tx-1, tx-2
@@ -386,11 +402,18 @@ pub fn thread_pool(
                 for acc in accesses.iter().filter(|a| a.mode == AccessMode::Read) {
                     if let Target::Storage(addr, entry) = &acc.target {
                         if concurrent.contains(&Access::storage_write(addr, entry)) {
-                            if !ignored_slots.contains(&format!("{}-{}", addr, entry)[..]) {
-                                log::trace!("[{}] wr conflict between tx-{} [committed] and tx-{} [to be committed], ABORT tx-{}", num_iteration, prev_tx, tx_id, tx_id);
-                                aborted = true;
-                                break 'outer;
+                            if ignored_slots.contains(&format!("{}-{}", addr, entry)[..]) {
+                                continue;
                             }
+
+                            if seen.contains(&prev_tx) {
+                                log::trace!("[{}] not aborting: tx-{} [to be committed] has seen tx-{} [then uncommitted]", num_iteration, tx_id, prev_tx);
+                                continue;
+                            }
+
+                            log::trace!("[{}] wr conflict between tx-{} [committed] and tx-{} [to be committed], ABORT tx-{}", num_iteration, prev_tx, tx_id, tx_id);
+                            aborted = true;
+                            break 'outer;
                         }
                     }
                 }
