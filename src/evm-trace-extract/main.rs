@@ -4,6 +4,7 @@ extern crate web3;
 
 use common::*;
 
+mod depgraph;
 mod occ;
 mod output_mode;
 mod pairwise;
@@ -219,7 +220,7 @@ async fn process_aborts(db: &DB, web3: &Web3, blocks: impl Iterator<Item = u64>,
 async fn occ_detailed_stats(db: &DB, _web3: &Web3, from: u64, to: u64, mode: OutputMode) {
     // print csv header if necessary
     if mode == OutputMode::Csv {
-        println!("block,num_txs,num_aborted,serial_gas_cost,pool_t_2_q_0,pool_t_4_q_0,pool_t_8_q_0,pool_t_16_q_0,pool_t_all_q_0,pool_t_2_q_2,pool_t_4_q_2,pool_t_8_q_2,pool_t_16_q_2,pool_t_all_q_2,");
+        println!("block,num_txs,num_aborted,serial_gas_cost,pool_t_2_q_0,pool_t_4_q_0,pool_t_8_q_0,pool_t_16_q_0,pool_t_all_q_0,pool_t_2_q_2,pool_t_4_q_2,pool_t_8_q_2,pool_t_16_q_2,pool_t_all_q_2,optimal_t_2,optimal_t_4,optimal_t_8,optimal_t_16,optimal_t_all");
     }
 
     // stream RPC results
@@ -299,9 +300,15 @@ async fn occ_detailed_stats(db: &DB, _web3: &Web3, from: u64, to: u64, mode: Out
         let pool_t_16_q_2 = simulate(16, 2, 100_000.into());
         let pool_t_all_q_2 = simulate(txs.len(), 2, 100_000.into());
 
+        let optimal_t_2 = depgraph::cost(&txs, &gas, 2);
+        let optimal_t_4 = depgraph::cost(&txs, &gas, 4);
+        let optimal_t_8 = depgraph::cost(&txs, &gas, 8);
+        let optimal_t_16 = depgraph::cost(&txs, &gas, 16);
+        let optimal_t_all = depgraph::cost(&txs, &gas, txs.len());
+
         if mode == OutputMode::Csv {
             println!(
-                "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+                "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
                 block,
                 num_txs,
                 num_aborted,
@@ -316,6 +323,11 @@ async fn occ_detailed_stats(db: &DB, _web3: &Web3, from: u64, to: u64, mode: Out
                 pool_t_8_q_2,
                 pool_t_16_q_2,
                 pool_t_all_q_2,
+                optimal_t_2,
+                optimal_t_4,
+                optimal_t_8,
+                optimal_t_16,
+                optimal_t_all,
             );
         }
     }
