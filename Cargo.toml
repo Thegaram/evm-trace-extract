@@ -9,6 +9,10 @@ name = "common"
 path = "src/common/lib.rs"
 
 [[bin]]
+name = "dep-graph"
+path = "src/dep-graph/main.rs"
+
+[[bin]]
 name = "evm-trace-extract"
 path = "src/evm-trace-extract/main.rs"
 
