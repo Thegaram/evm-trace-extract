@@ -167,7 +167,6 @@ pub fn thread_pool(
 ) -> U256 {
     assert_eq!(txs.len(), gas.len());
 
-    #[allow(unused_mut)]
     let mut ignored_slots: HashSet<&str> = Default::default();
     ignored_slots.insert("0x06012c8cf97bead5deae237070f9587f8e7a266d-0x000000000000000000000000000000000000000000000000000000000000000f");
     ignored_slots.insert("0x06012c8cf97bead5deae237070f9587f8e7a266d-0x0000000000000000000000000000000000000000000000000000000000000006");
@@ -196,6 +195,7 @@ pub fn thread_pool(
     // overall cost of execution
     let mut cost = U256::from(0);
 
+    #[allow(non_snake_case)]
     let mut N = 0;
 
     let is_wr_conflict = |running: usize, to_schedule: usize| {
