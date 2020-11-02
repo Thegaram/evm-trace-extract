@@ -277,7 +277,17 @@ async fn occ_detailed_stats(db: &DB, _web3: &Web3, from: u64, to: u64, mode: Out
         let num_txs = txs.len();
         let num_aborted = occ::num_aborts(&txs);
 
-        let simulate = |num_threads| occ::thread_pool(&txs, &gas, &info, num_threads);
+        let simulate = |num_threads| {
+            occ::thread_pool(
+                &txs,
+                &gas,
+                &info,
+                num_threads,
+                false, // allow_ignore_slots
+                false, // allow_avoid_conflicts_during_scheduling
+                false, // allow_read_from_uncommitted
+            )
+        };
 
         let pool_t_2_q_0 = simulate(2);
         let pool_t_4_q_0 = simulate(4);
