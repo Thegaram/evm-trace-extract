@@ -7,70 +7,29 @@ use common::*;
 mod depgraph;
 mod occ;
 
-use futures::{stream, StreamExt};
+use futures::{future, stream, FutureExt, StreamExt};
 use rocksdb::DB;
 use std::env;
-use web3::{transports, types::U256, Web3 as Web3Generic};
+use web3::types::U256;
 
-type Web3 = Web3Generic<transports::Http>;
+// define a "trait alias" (see https://www.worthe-it.co.za/blog/2017-01-15-aliasing-traits-in-rust.html)
+trait BlockDataStream: stream::Stream<Item = (u64, (Vec<U256>, Vec<rpc::TxInfo>))> {}
+impl<T> BlockDataStream for T where T: stream::Stream<Item = (u64, (Vec<U256>, Vec<rpc::TxInfo>))> {}
 
-async fn occ_detailed_stats(db: &DB, _web3: &Web3, from: u64, to: u64) {
+async fn occ_detailed_stats(trace_db: &DB, mut stream: impl BlockDataStream + Unpin) {
     // print csv header
-    println!("block,num_txs,num_aborted,serial_gas_cost,pool_t_2,pool_t_4,pool_t_8,pool_t_16,pool_t_all,optimal_t_2,optimal_t_4,optimal_t_8,optimal_t_16,optimal_t_all");
-
-    // stream RPC results
-    // let others = stream::iter(from..=to)
-    //     .map(|b| {
-    //         let web3_clone = web3.clone();
-
-    //         let a = tokio::spawn(async move {
-    //             rpc::gas_parity(&web3_clone, b)
-    //                 .await
-    //                 .expect("parity_getBlockReceipts RPC should succeed")
-    //         });
-
-    //         let web3_clone = web3.clone();
-
-    //         let b = tokio::spawn(async move {
-    //             rpc::tx_infos(&web3_clone, b)
-    //                 .await
-    //                 .expect("eth_getBlock RPC should succeed")
-    //                 .expect("block should exist")
-    //         });
-
-    //         future::join(a, b).map(|(a, b)| (a.expect("future OK"), b.expect("future OK")))
-    //     })
-    //     .buffered(10);
-
-    let rpc_db = db::RpcDb::open("./_rpc_db").expect("db open succeeds");
-
-    let others = stream::iter(from..=to).map(|block| {
-        let gas = rpc_db
-            .gas_used(block)
-            .expect("get from db succeeds")
-            .expect("block exists in db");
-
-        let info = rpc_db
-            .tx_infos(block)
-            .expect("get from db succeeds")
-            .expect("block exists in db");
-
-        (gas, info)
-    });
-
-    let blocks = stream::iter(from..=to);
-    let mut it = blocks.zip(others);
+    println!("block,num_txs,num_conflicts,serial_gas_cost,pool_t_2,pool_t_4,pool_t_8,pool_t_16,pool_t_all,optimal_t_2,optimal_t_4,optimal_t_8,optimal_t_16,optimal_t_all");
 
     // simulate OCC for each block
-    while let Some((block, (gas, info))) = it.next().await {
-        let txs = db::tx_infos(&db, block, &info);
+    while let Some((block, (gas, info))) = stream.next().await {
+        let txs = db::tx_infos(&trace_db, block, &info);
 
         assert_eq!(txs.len(), gas.len());
         assert_eq!(txs.len(), info.len());
 
         let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
         let num_txs = txs.len();
-        let num_aborted = occ::num_aborts(&txs);
+        let num_conflicts = occ::num_conflicts(&txs);
 
         let simulate = |num_threads| {
             occ::thread_pool(
@@ -100,7 +59,7 @@ async fn occ_detailed_stats(db: &DB, _web3: &Web3, from: u64, to: u64) {
             "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
             block,
             num_txs,
-            num_aborted,
+            num_conflicts,
             serial,
             pool_t_2_q_0,
             pool_t_4_q_0,
@@ -116,6 +75,65 @@ async fn occ_detailed_stats(db: &DB, _web3: &Web3, from: u64, to: u64) {
     }
 }
 
+#[allow(dead_code)]
+fn stream_from_rpc(provider: &str, from: u64, to: u64) -> web3::Result<impl BlockDataStream> {
+    // connect to node
+    let transport = web3::transports::Http::new(provider)?;
+    let web3 = web3::Web3::new(transport);
+
+    // stream RPC results
+    let gas_and_infos = stream::iter(from..=to)
+        .map(move |b| {
+            let web3_clone = web3.clone();
+
+            let gas = tokio::spawn(async move {
+                rpc::gas_parity(&web3_clone, b)
+                    .await
+                    .expect("parity_getBlockReceipts RPC should succeed")
+            });
+
+            let web3_clone = web3.clone();
+
+            let infos = tokio::spawn(async move {
+                rpc::tx_infos(&web3_clone, b)
+                    .await
+                    .expect("eth_getBlock RPC should succeed")
+                    .expect("block should exist")
+            });
+
+            future::join(gas, infos)
+                .map(|(gas, infos)| (gas.expect("future OK"), infos.expect("future OK")))
+        })
+        .buffered(10);
+
+    let blocks = stream::iter(from..=to);
+    let stream = blocks.zip(gas_and_infos);
+    Ok(stream)
+}
+
+#[allow(dead_code)]
+fn stream_from_db(db_path: &str, from: u64, to: u64) -> impl BlockDataStream {
+    let rpc_db = db::RpcDb::open(db_path).expect("db open succeeds");
+
+    let gas_and_infos = stream::iter(from..=to).map(move |block| {
+        let gas = rpc_db
+            .gas_used(block)
+            .expect(&format!("get gas #{} failed", block)[..])
+            .expect(&format!("#{} not found in db", block)[..]);
+
+        let info = rpc_db
+            .tx_infos(block)
+            .expect(&format!("get infos #{} failed", block)[..])
+            .expect(&format!("#{} not found in db", block)[..]);
+
+        (gas, info)
+    });
+
+    let blocks = stream::iter(from..=to);
+    let stream = blocks.zip(gas_and_infos);
+    stream
+}
+
 #[tokio::main]
 async fn main() -> web3::Result<()> {
     env_logger::builder()
@@ -123,9 +141,6 @@ async fn main() -> web3::Result<()> {
         .format_level(false)
         .format_module_path(false)
         .init();
-
-    let transport = web3::transports::Http::new("http://localhost:8545")?;
-    let web3 = web3::Web3::new(transport);
 
     // parse args
     let args: Vec<String> = env::args().collect();
@@ -163,7 +178,10 @@ async fn main() -> web3::Result<()> {
     }
 
     // process
-    occ_detailed_stats(&db, &web3, from, to).await;
+    let stream = stream_from_db("./_rpc_db", from, to);
+    // let stream = stream_from_rpc("http://localhost:8545", from, to)?;
+
+    occ_detailed_stats(&db, stream).await;
 
     Ok(())
 }

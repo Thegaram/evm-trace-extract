@@ -11,7 +11,7 @@ use web3::types::U256;
 // The actual number can also be higher because the same transaction could be aborted multiple times,
 //      e.g. with batch [tx-1, tx-2, tx-3], tx-2's abort will make tx-3 abort as well,
 //      then in the next batch [tx-2, tx-3, tx-4] tx-3 might be aborted again if it reads a slot written by tx-2.
-pub fn num_aborts(txs: &Vec<TransactionInfo>) -> u64 {
+pub fn num_conflicts(txs: &Vec<TransactionInfo>) -> u64 {
     let mut num_aborted = 0;
 
     // keep track of which storage entries were written
