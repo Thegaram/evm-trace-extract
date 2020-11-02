@@ -349,6 +349,7 @@ dependencies = [
  "regex",
  "rmp-serde",
  "rocksdb",
+ "rustop",
  "serde_json",
  "serial_test",
  "tokio",
@@ -1330,6 +1331,12 @@ name = "rustc-hex"
 version = "2.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3e75f6a532d0fd9f7f13144f392b6ad56a32696bfcd9c78f797f16bbb6f072d6"
+
+[[package]]
+name = "rustop"
+version = "1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ccb57833f46c9d679d68f383e81b9a74b82aa8d6f8a9c9aaae7fc29476bc3274"
 
 [[package]]
 name = "ryu"

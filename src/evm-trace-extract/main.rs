@@ -1,7 +1,3 @@
-extern crate regex;
-extern crate rocksdb;
-extern crate web3;
-
 use common::*;
 
 mod depgraph;
@@ -9,7 +5,7 @@ mod occ;
 
 use futures::{future, stream, FutureExt, StreamExt};
 use rocksdb::DB;
-use std::env;
+use rustop::opts;
 use web3::types::U256;
 
 // define a "trait alias" (see https://www.worthe-it.co.za/blog/2017-01-15-aliasing-traits-in-rust.html)
@@ -17,21 +13,19 @@ trait BlockDataStream: stream::Stream<Item = (u64, (Vec<U256>, Vec<rpc::TxInfo>)
 impl<T> BlockDataStream for T where T: stream::Stream<Item = (u64, (Vec<U256>, Vec<rpc::TxInfo>))> {}
 
 async fn occ_detailed_stats(trace_db: &DB, mut stream: impl BlockDataStream + Unpin) {
-    // print csv header
     println!("block,num_txs,num_conflicts,serial_gas_cost,pool_t_2,pool_t_4,pool_t_8,pool_t_16,pool_t_all,optimal_t_2,optimal_t_4,optimal_t_8,optimal_t_16,optimal_t_all");
 
-    // simulate OCC for each block
     while let Some((block, (gas, info))) = stream.next().await {
         let txs = db::tx_infos(&trace_db, block, &info);
 
         assert_eq!(txs.len(), gas.len());
         assert_eq!(txs.len(), info.len());
 
-        let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
         let num_txs = txs.len();
         let num_conflicts = occ::num_conflicts(&txs);
+        let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
 
-        let simulate = |num_threads| {
+        let occ = |num_threads| {
             occ::thread_pool(
                 &txs,
                 &gas,
@@ -43,11 +37,11 @@ async fn occ_detailed_stats(trace_db: &DB, mut stream: impl BlockDataStream + Un
             )
         };
 
-        let pool_t_2_q_0 = simulate(2);
-        let pool_t_4_q_0 = simulate(4);
-        let pool_t_8_q_0 = simulate(8);
-        let pool_t_16_q_0 = simulate(16);
-        let pool_t_all_q_0 = simulate(txs.len());
+        let pool_t_2_q_0 = occ(2);
+        let pool_t_4_q_0 = occ(4);
+        let pool_t_8_q_0 = occ(8);
+        let pool_t_16_q_0 = occ(16);
+        let pool_t_all_q_0 = occ(txs.len());
 
         let optimal_t_2 = depgraph::cost(&txs, &gas, 2);
         let optimal_t_4 = depgraph::cost(&txs, &gas, 4);
@@ -136,33 +130,26 @@ fn stream_from_db(db_path: &str, from: u64, to: u64) -> impl BlockDataStream {
 
 #[tokio::main]
 async fn main() -> web3::Result<()> {
-    env_logger::builder()
-        .format_timestamp(None)
-        .format_level(false)
-        .format_module_path(false)
-        .init();
-
     // parse args
-    let args: Vec<String> = env::args().collect();
+    let (args, _) = opts! {
+        opt from:u64, desc:"Process from this block number.";
+        opt to:u64, desc:"Process up to (and including) this block number.";
+        opt traces:String, desc:"Path to trace DB.";
+        opt rpc_db:Option<String>, desc:"Path to RPC DB (optional).";
+        opt rpc_provider:Option<String>, desc:"RPC provider URL (optional).";
+    }
+    .parse_or_exit();
 
-    if args.len() != 4 {
-        println!("Usage: evm-trace-extract [db-path:str] [from-block:int] [to-block:int]");
+    if args.rpc_db.is_none() && args.rpc_provider.is_none() {
+        println!("Error: you need to specify one of '--rpc-db' and '--rpc-provider'.");
+        println!("Try --help for help.");
         return Ok(());
     }
 
-    let path = &args[1][..];
+    // open db and validate args
+    let trace_db = db::open_traces(&args.traces);
 
-    let from = args[2]
-        .parse::<u64>()
-        .expect("from-block should be a number");
-
-    let to = args[3].parse::<u64>().expect("to-block should be a number");
-
-    // open db
-    let db = db::open_traces(path);
-
-    // check range
-    let latest_raw = db
+    let latest_raw = trace_db
         .get(b"latest")
         .expect("get latest should succeed")
         .expect("latest should exist");
@@ -172,16 +159,30 @@ async fn main() -> web3::Result<()> {
         .parse::<u64>()
         .expect("parse to int should succees");
 
-    if to > latest {
+    if args.to > latest {
         println!("Latest header in trace db: #{}", latest);
         return Ok(());
     }
 
-    // process
-    let stream = stream_from_db("./_rpc_db", from, to);
-    // let stream = stream_from_rpc("http://localhost:8545", from, to)?;
+    // initialize logger
+    env_logger::builder()
+        .format_timestamp(None)
+        .format_level(false)
+        .format_module_path(false)
+        .init();
 
-    occ_detailed_stats(&db, stream).await;
+    // process all blocks in range
+    match (args.rpc_db, args.rpc_provider) {
+        (Some(rpc_db), _) => {
+            let stream = stream_from_db(&rpc_db, args.from, args.to);
+            occ_detailed_stats(&trace_db, stream).await;
+        }
+        (_, Some(rpc_provider)) => {
+            let stream = stream_from_rpc(&rpc_provider, args.from, args.to)?;
+            occ_detailed_stats(&trace_db, stream).await;
+        }
+        _ => unreachable!(),
+    };
 
     Ok(())
 }
