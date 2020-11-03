@@ -161,7 +161,9 @@ pub fn cost(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, num_threads: usize) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use maplit::{convert_args, hashmap};
 
+    #[rustfmt::skip]
     #[test]
     fn test_cost() {
         let mut graph = DependencyGraph::default();
@@ -170,29 +172,13 @@ mod tests {
         // 2 (1) - 3 (1) - 4 (1) - 5 (1)
         // 6 (1) - 7 (1)
 
-        graph.predecessors_of.insert(1, vec![0]);
-        graph.predecessors_of.insert(3, vec![2]);
-        graph.predecessors_of.insert(4, vec![3]);
-        graph.predecessors_of.insert(5, vec![4]);
-        graph.predecessors_of.insert(7, vec![6]);
+        graph.predecessors_of = hashmap! { 1 => vec![0], 3 => vec![2], 4 => vec![3], 5 => vec![4], 7 => vec![6] };
+        graph.successors_of = hashmap! { 0 => vec![1], 2 => vec![3], 3 => vec![4], 4 => vec![5], 6 => vec![7] };
 
-        graph.successors_of.insert(0, vec![1]);
-        graph.successors_of.insert(2, vec![3]);
-        graph.successors_of.insert(3, vec![4]);
-        graph.successors_of.insert(4, vec![5]);
-        graph.successors_of.insert(6, vec![7]);
+        let gas = vec![1.into(); 8];
+        let expected = convert_args!(values=Into::into, hashmap! ( 0 => 2, 1 => 1, 2 => 4, 3 => 3, 4 => 2, 5 => 1, 6 => 2, 7 => 1 ));
 
-        let gas = vec![U256::from(1); 8];
-
-        let max_cost_from = graph.max_costs(&gas);
-        assert_eq!(max_cost_from[&0], U256::from(2));
-        assert_eq!(max_cost_from[&1], U256::from(1));
-        assert_eq!(max_cost_from[&2], U256::from(4));
-        assert_eq!(max_cost_from[&3], U256::from(3));
-        assert_eq!(max_cost_from[&4], U256::from(2));
-        assert_eq!(max_cost_from[&5], U256::from(1));
-        assert_eq!(max_cost_from[&6], U256::from(2));
-        assert_eq!(max_cost_from[&7], U256::from(1));
+        assert_eq!(graph.max_costs(&gas), expected);
 
         // 0 1 6 7
         // 2 3 4 5
@@ -205,26 +191,10 @@ mod tests {
         // 2 (1) - 3 (1) - 4 (1) - 5 (1)
         // 6 (1) - 7 (3)
 
-        let gas = vec![
-            U256::from(1), // 0
-            U256::from(3), // 1
-            U256::from(1), // 2
-            U256::from(1), // 3
-            U256::from(1), // 4
-            U256::from(1), // 5
-            U256::from(1), // 6
-            U256::from(3), // 7
-        ];
+        let gas = vec![1, 3, 1, 1, 1, 1, 1, 3].into_iter().map(Into::into).collect();
+        let expected = convert_args!(values=Into::into, hashmap! ( 0 => 4, 1 => 3, 2 => 4, 3 => 3, 4 => 2, 5 => 1, 6 => 4, 7 => 3 ));
 
-        let max_cost_from = graph.max_costs(&gas);
-        assert_eq!(max_cost_from[&0], U256::from(4));
-        assert_eq!(max_cost_from[&1], U256::from(3));
-        assert_eq!(max_cost_from[&2], U256::from(4));
-        assert_eq!(max_cost_from[&3], U256::from(3));
-        assert_eq!(max_cost_from[&4], U256::from(2));
-        assert_eq!(max_cost_from[&5], U256::from(1));
-        assert_eq!(max_cost_from[&6], U256::from(4));
-        assert_eq!(max_cost_from[&7], U256::from(3));
+        assert_eq!(graph.max_costs(&gas), expected);
 
         // 0 1 1 1 2 4
         // 6 7 7 7 3 5
@@ -243,16 +213,9 @@ mod tests {
         graph.successors_of.insert(7, vec![4]);
 
         let gas = vec![U256::from(1); 8];
+        let expected = convert_args!(values=Into::into, hashmap! ( 0 => 4, 1 => 3, 2 => 4, 3 => 3, 4 => 2, 5 => 1, 6 => 4, 7 => 3 ));
 
-        let max_cost_from = graph.max_costs(&gas);
-        assert_eq!(max_cost_from[&0], U256::from(4));
-        assert_eq!(max_cost_from[&1], U256::from(3));
-        assert_eq!(max_cost_from[&2], U256::from(4));
-        assert_eq!(max_cost_from[&3], U256::from(3));
-        assert_eq!(max_cost_from[&4], U256::from(2));
-        assert_eq!(max_cost_from[&5], U256::from(1));
-        assert_eq!(max_cost_from[&6], U256::from(4));
-        assert_eq!(max_cost_from[&7], U256::from(3));
+        assert_eq!(graph.max_costs(&gas), expected);
 
         // 0 6 1 4 5
         // 2 3 7
@@ -263,11 +226,11 @@ mod tests {
 
         let graph = DependencyGraph::default();
 
-        // 0
-        // 1
-        // 2
-        // 3
-        // 5
+        // 0 (1)
+        // 1 (1)
+        // 2 (1)
+        // 3 (1)
+        // 5 (1)
 
         let gas = vec![U256::from(1); 5];
 
