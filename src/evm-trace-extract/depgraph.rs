@@ -29,7 +29,7 @@ impl DependencyGraph {
         let mut predecessors_of = HashMap::<usize, Vec<usize>>::new();
         let mut successors_of = HashMap::<usize, Vec<usize>>::new();
 
-        for first in 0..(txs.len() - 1) {
+        for first in 0..(txs.len().saturating_sub(1)) {
             for second in (first + 1)..txs.len() {
                 if is_wr_conflict(&txs[first], &txs[second]) {
                     predecessors_of.entry(second).or_insert(vec![]).push(first);
