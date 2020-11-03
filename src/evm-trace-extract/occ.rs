@@ -270,8 +270,8 @@ pub fn thread_pool(
                 &txs[tx_id].tx_hash[0..8]
             );
 
-            // check executed txs for conflicts
             if allow_avoid_conflicts_during_scheduling {
+                // check executed txs for conflicts
                 for Reverse((executed_tx, _, _)) in &commit_queue {
                     // case 1:
                     // e.g., tx-3 is waiting to be committed, we're scheduling tx-5
@@ -287,9 +287,7 @@ pub fn thread_pool(
                     //       tx-5 reads from tx-3 => tx-5 should be invalidated
                     // TODO
                 }
-            }
 
-            if allow_avoid_conflicts_during_scheduling {
                 // check running txs for conflicts
                 for thread_id in 0..threads.len() {
                     let (running_tx, ..) = match &threads[thread_id] {
