@@ -12,23 +12,26 @@ use web3::types::U256;
 trait BlockDataStream: stream::Stream<Item = (u64, (Vec<U256>, Vec<rpc::TxInfo>))> {}
 impl<T> BlockDataStream for T where T: stream::Stream<Item = (u64, (Vec<U256>, Vec<rpc::TxInfo>))> {}
 
-async fn occ_detailed_stats(trace_db: &DB, stream: impl BlockDataStream + Unpin) {
+async fn occ_detailed_stats(
+    trace_db: &DB,
+    batch_size: usize,
+    stream: impl BlockDataStream + Unpin,
+) {
     println!("block,num_txs,num_conflicts,serial_gas_cost,pool_t_2,pool_t_4,pool_t_8,pool_t_16,pool_t_all,optimal_t_2,optimal_t_4,optimal_t_8,optimal_t_16,optimal_t_all");
 
-    let chunk_size = 3;
-    let mut stream = stream.chunks(chunk_size);
+    let mut stream = stream.chunks(batch_size);
 
-    while let Some(chunk) = stream.next().await {
+    while let Some(batch) = stream.next().await {
         let mut blocks = vec![];
         let mut txs = vec![];
         let mut gas = vec![];
         let mut info = vec![];
 
-        for (block, (chunk_gas, chunk_info)) in chunk {
+        for (block, (batch_gas, batch_info)) in batch {
             blocks.push(block);
-            txs.extend(db::tx_infos(&trace_db, block, &chunk_info).into_iter());
-            gas.extend(chunk_gas.into_iter());
-            info.extend(chunk_info.into_iter());
+            txs.extend(db::tx_infos(&trace_db, block, &batch_info).into_iter());
+            gas.extend(batch_gas.into_iter());
+            info.extend(batch_info.into_iter());
         }
 
         assert_eq!(txs.len(), gas.len());
@@ -158,6 +161,7 @@ async fn main() -> web3::Result<()> {
         opt traces:String, desc:"Path to trace DB.";
         opt rpc_db:Option<String>, desc:"Path to RPC DB (optional).";
         opt rpc_provider:Option<String>, desc:"RPC provider URL (optional).";
+        opt batch_size:usize=1, desc:"Size of block batch (optional).";
     }
     .parse_or_exit();
 
@@ -196,11 +200,11 @@ async fn main() -> web3::Result<()> {
     match (args.rpc_db, args.rpc_provider) {
         (Some(rpc_db), _) => {
             let stream = stream_from_db(&rpc_db, args.from, args.to);
-            occ_detailed_stats(&trace_db, stream).await;
+            occ_detailed_stats(&trace_db, args.batch_size, stream).await;
         }
         (_, Some(rpc_provider)) => {
             let stream = stream_from_rpc(&rpc_provider, args.from, args.to)?;
-            occ_detailed_stats(&trace_db, stream).await;
+            occ_detailed_stats(&trace_db, args.batch_size, stream).await;
         }
         _ => unreachable!(),
     };
