@@ -43,7 +43,7 @@ async fn occ_detailed_stats(trace_db: &DB, mut stream: impl BlockDataStream + Un
         // let pool_t_16_q_0 = occ(16);
         // let pool_t_all_q_0 = occ(txs.len());
 
-        let graph = depgraph::DependencyGraph::from(&txs, &info, 0);
+        let graph = depgraph::DependencyGraph::simple(&txs, &info);
 
         let optimal_t_2 = graph.cost(&gas, 2);
         let optimal_t_4 = graph.cost(&gas, 4);
@@ -51,7 +51,7 @@ async fn occ_detailed_stats(trace_db: &DB, mut stream: impl BlockDataStream + Un
         let optimal_t_16 = graph.cost(&gas, 16);
         let optimal_t_all = graph.cost(&gas, txs.len());
 
-        let graph = depgraph::DependencyGraph::from(&txs, &info, 30);
+        let graph = depgraph::DependencyGraph::with_sharding(&txs, &info, 30);
 
         let optimal_t_2_l_10 = graph.cost(&gas, 2);
         let optimal_t_4_l_10 = graph.cost(&gas, 4);

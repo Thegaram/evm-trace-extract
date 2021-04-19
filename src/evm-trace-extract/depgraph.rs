@@ -26,19 +26,24 @@ pub struct DependencyGraph {
 }
 
 impl DependencyGraph {
-    pub fn from(
+    pub fn simple(txs: &Vec<TransactionInfo>, info: &Vec<rpc::TxInfo>) -> DependencyGraph {
+        DependencyGraph::with_sharding(txs, info, 1)
+    }
+
+    pub fn with_sharding(
         txs: &Vec<TransactionInfo>,
         info: &Vec<rpc::TxInfo>,
         counter_len: u64,
     ) -> DependencyGraph {
+        assert!(counter_len > 0);
+
         let mut predecessors_of = HashMap::<usize, Vec<usize>>::new();
         let mut successors_of = HashMap::<usize, Vec<usize>>::new();
 
         for first in 0..(txs.len().saturating_sub(1)) {
             for second in (first + 1)..txs.len() {
-                if counter_len > 0
-                    && info[first].from.to_low_u64_be() % counter_len
-                        != info[second].from.to_low_u64_be() % counter_len
+                if info[first].from.to_low_u64_be() % counter_len
+                    != info[second].from.to_low_u64_be() % counter_len
                 {
                     continue;
                 }
