@@ -20,7 +20,7 @@ fn is_wr_conflict(first: &TransactionInfo, second: &TransactionInfo) -> bool {
 }
 
 #[derive(Default)]
-struct DependencyGraph {
+pub struct DependencyGraph {
     pub predecessors_of: HashMap<usize, Vec<usize>>,
     pub successors_of: HashMap<usize, Vec<usize>>,
 }
@@ -163,16 +163,6 @@ impl DependencyGraph {
 
         cost
     }
-}
-
-pub fn cost(
-    txs: &Vec<TransactionInfo>,
-    gas: &Vec<U256>,
-    num_threads: usize,
-    info: &Vec<rpc::TxInfo>,
-    counter_len: u64,
-) -> U256 {
-    DependencyGraph::from(txs, info, counter_len).cost(gas, num_threads)
 }
 
 #[cfg(test)]

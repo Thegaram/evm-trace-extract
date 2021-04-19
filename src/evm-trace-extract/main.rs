@@ -43,17 +43,21 @@ async fn occ_detailed_stats(trace_db: &DB, mut stream: impl BlockDataStream + Un
         // let pool_t_16_q_0 = occ(16);
         // let pool_t_all_q_0 = occ(txs.len());
 
-        let optimal_t_2 = depgraph::cost(&txs, &gas, 2, &info, 0);
-        let optimal_t_4 = depgraph::cost(&txs, &gas, 4, &info, 0);
-        let optimal_t_8 = depgraph::cost(&txs, &gas, 8, &info, 0);
-        let optimal_t_16 = depgraph::cost(&txs, &gas, 16, &info, 0);
-        let optimal_t_all = depgraph::cost(&txs, &gas, txs.len(), &info, 0);
+        let graph = depgraph::DependencyGraph::from(&txs, &info, 0);
 
-        let optimal_t_2_l_10 = depgraph::cost(&txs, &gas, 2, &info, 10);
-        let optimal_t_4_l_10 = depgraph::cost(&txs, &gas, 4, &info, 10);
-        let optimal_t_8_l_10 = depgraph::cost(&txs, &gas, 8, &info, 10);
-        let optimal_t_16_l_10 = depgraph::cost(&txs, &gas, 16, &info, 10);
-        let optimal_t_all_l_10 = depgraph::cost(&txs, &gas, txs.len(), &info, 10);
+        let optimal_t_2 = graph.cost(&gas, 2);
+        let optimal_t_4 = graph.cost(&gas, 4);
+        let optimal_t_8 = graph.cost(&gas, 8);
+        let optimal_t_16 = graph.cost(&gas, 16);
+        let optimal_t_all = graph.cost(&gas, txs.len());
+
+        let graph = depgraph::DependencyGraph::from(&txs, &info, 30);
+
+        let optimal_t_2_l_10 = graph.cost(&gas, 2);
+        let optimal_t_4_l_10 = graph.cost(&gas, 4);
+        let optimal_t_8_l_10 = graph.cost(&gas, 8);
+        let optimal_t_16_l_10 = graph.cost(&gas, 16);
+        let optimal_t_all_l_10 = graph.cost(&gas, txs.len());
 
         println!(
             "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
