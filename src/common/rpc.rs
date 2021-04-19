@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(txs[1].to, Some("179631c363eef2cfec04f2354476f7b407ed031d".parse().unwrap()));
         assert_eq!(txs[1].gas, U256::from(150_000));
 
-       // ...
+        // ...
 
         assert_eq!(txs[87].hash, "76da1628c18e0096ed0a24d37adf110ee39fea04c8bed36dfa7065c016f5d4d3".parse().unwrap());
         assert_eq!(txs[87].to, Some("d2f81cd7a20d60c0d558496c7169a20968389b40".parse().unwrap()));
