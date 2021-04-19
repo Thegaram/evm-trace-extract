@@ -116,6 +116,7 @@ impl RpcDb {
             .into_iter()
             .map(|tx| rpc::TxInfo {
                 hash: tx.hash,
+                from: tx.from,
                 to: tx.to,
                 gas_limit: tx.gas,
             })

@@ -155,6 +155,7 @@ pub fn batches(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, batch_size: usize) -
     cost
 }
 
+#[allow(dead_code)]
 pub fn thread_pool(
     txs: &Vec<TransactionInfo>,
     gas: &Vec<U256>,

@@ -56,11 +56,13 @@ async fn occ_detailed_stats(trace_db: &DB, stream: impl BlockDataStream + Unpin)
         let pool_t_16_q_0 = occ(16);
         let pool_t_all_q_0 = occ(txs.len());
 
-        let optimal_t_2 = depgraph::cost(&txs, &gas, 2);
-        let optimal_t_4 = depgraph::cost(&txs, &gas, 4);
-        let optimal_t_8 = depgraph::cost(&txs, &gas, 8);
-        let optimal_t_16 = depgraph::cost(&txs, &gas, 16);
-        let optimal_t_all = depgraph::cost(&txs, &gas, txs.len());
+        let graph = depgraph::DependencyGraph::simple(&txs, &info);
+
+        let optimal_t_2 = graph.cost(&gas, 2);
+        let optimal_t_4 = graph.cost(&gas, 4);
+        let optimal_t_8 = graph.cost(&gas, 8);
+        let optimal_t_16 = graph.cost(&gas, 16);
+        let optimal_t_all = graph.cost(&gas, txs.len());
 
         let block = blocks
             .into_iter()
