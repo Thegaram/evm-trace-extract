@@ -50,6 +50,10 @@ async fn occ_detailed_stats(
                 false, // allow_ignore_slots
                 false, // allow_avoid_conflicts_during_scheduling
                 false, // allow_read_from_uncommitted
+                &mut Default::default(),
+                &mut Default::default(),
+                &mut Default::default(),
+                &mut Default::default(),
             )
         };
 
