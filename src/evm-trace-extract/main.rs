@@ -47,7 +47,7 @@ async fn occ_detailed_stats(
         let optimal_t_4 = graph.cost(&gas, 4);
         let optimal_t_8 = graph.cost(&gas, 8);
         let optimal_t_16 = graph.cost(&gas, 16);
-        let optimal_t_all = graph.cost(&gas, txs.len());
+        let optimal_t_32 = graph.cost(&gas, 32);
 
         let graph = depgraph::DependencyGraph::with_sharding(&txs, &info, 30);
 
@@ -55,7 +55,7 @@ async fn occ_detailed_stats(
         let optimal_t_4_l_30 = graph.cost(&gas, 4);
         let optimal_t_8_l_30 = graph.cost(&gas, 8);
         let optimal_t_16_l_30 = graph.cost(&gas, 16);
-        let optimal_t_all_l_30 = graph.cost(&gas, txs.len());
+        let optimal_t_32_l_30 = graph.cost(&gas, 32);
 
         let block = blocks
             .into_iter()
@@ -73,12 +73,12 @@ async fn occ_detailed_stats(
             optimal_t_4,
             optimal_t_8,
             optimal_t_16,
-            optimal_t_all,
+            optimal_t_32,
             optimal_t_2_l_30,
             optimal_t_4_l_30,
             optimal_t_8_l_30,
             optimal_t_16_l_30,
-            optimal_t_all_l_30,
+            optimal_t_32_l_30,
         );
     }
 }
