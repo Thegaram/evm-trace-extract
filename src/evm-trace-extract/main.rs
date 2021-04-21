@@ -111,7 +111,7 @@ async fn occ_detailed_stats(
     println!("key,value");
 
     for (key, value) in reexec_cost_per_contract {
-        println!("{:?},{:?}", key, value);
+        println!("{},{:?}", key, value);
     }
 
     println!("\nreexec_cost_per_transaction");
