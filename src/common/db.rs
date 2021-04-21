@@ -1,8 +1,10 @@
+use crate::compat::Transaction as DbTransaction;
 use crate::rpc;
 use crate::transaction_info::{parse_accesses, parse_tx_hash, TransactionInfo};
 use rocksdb::{Error, Options, SliceTransform, DB};
 use std::collections::HashMap;
-use web3::types::{Transaction, TransactionReceipt, U256};
+use std::convert::TryInto;
+use web3::types::{Transaction as Web3Transaction, TransactionReceipt, U256};
 
 pub fn open_traces(path: &str) -> DB {
     let prefix_extractor = SliceTransform::create_fixed_prefix(8);
@@ -91,13 +93,18 @@ impl RpcDb {
         format!("{:0>8}-rec", block).as_bytes().to_vec()
     }
 
-    pub fn put_txs(&mut self, block: u64, txs: Vec<Transaction>) -> Result<(), Error> {
+    pub fn put_txs(&mut self, block: u64, txs: Vec<Web3Transaction>) -> Result<(), Error> {
+        let txs: Vec<DbTransaction> = txs
+            .into_iter()
+            .map(|tx| tx.try_into().expect("tx conversion failed"))
+            .collect();
+
         let key = RpcDb::txs_key(block);
         let value = rmp_serde::to_vec(&txs).expect("serialize should succeed");
         self.db.put(key, value)
     }
 
-    pub fn get_txs(&self, block: u64) -> Result<Option<Vec<Transaction>>, Error> {
+    pub fn get_txs(&self, block: u64) -> Result<Option<Vec<DbTransaction>>, Error> {
         let key = RpcDb::txs_key(block);
 
         match self.db.get(&key)? {
@@ -116,7 +123,7 @@ impl RpcDb {
             .into_iter()
             .map(|tx| rpc::TxInfo {
                 hash: tx.hash,
-                from: tx.from.expect("tx.from not empty"),
+                from: tx.from,
                 to: tx.to,
                 gas_limit: tx.gas,
             })

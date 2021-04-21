@@ -130,7 +130,7 @@ pub async fn tx_infos(web3: &Web3, num: u64) -> Result<Option<Vec<TxInfo>>, web3
         txs.iter()
             .map(|tx| TxInfo {
                 hash: tx.hash,
-                from: tx.from.expect("tx.from not empty"),
+                from: tx.from.expect("tx.from is not empty"),
                 to: tx.to,
                 gas_limit: tx.gas,
             })

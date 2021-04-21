@@ -317,6 +317,7 @@ dependencies = [
  "rmp-serde",
  "rocksdb",
  "rustop",
+ "serde",
  "serde_json",
  "serial_test",
  "tokio",
