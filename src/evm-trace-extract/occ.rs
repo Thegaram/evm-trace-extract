@@ -3,7 +3,7 @@ use crate::transaction_info::{Access, AccessMode, Target, TransactionInfo};
 use std::cmp::{min, Reverse};
 use std::collections::{BinaryHeap, HashSet};
 use std::convert::TryFrom;
-use web3::types::{H160, H256, U256};
+use web3::types::U256;
 
 // Estimate number of aborts (due to conflicts) in block.
 // The actual number can be lower if we process transactions in batches,
@@ -464,7 +464,6 @@ pub fn thread_pool(
 
                             log::trace!("[{}] wr conflict between tx-{} ({}) [committed] and tx-{} ({}) [to be committed], ABORT tx-{}", N, prev_tx, &txs[prev_tx].tx_hash[0..8], tx_id, &txs[tx_id].tx_hash[0..8], tx_id);
                             aborted = true;
-
                             break 'outer;
                         }
                     }
