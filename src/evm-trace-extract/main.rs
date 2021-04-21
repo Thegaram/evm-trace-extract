@@ -100,21 +100,21 @@ async fn occ_detailed_stats(
         println!("{:?},{:?}", key, value);
     }
 
-    println!("\reexec_cost_per_receiver");
+    println!("\nreexec_cost_per_receiver");
     println!("key,value");
 
     for (key, value) in reexec_cost_per_receiver {
         println!("{:?},{:?}", key, value);
     }
 
-    println!("\reexec_cost_per_contract");
+    println!("\nreexec_cost_per_contract");
     println!("key,value");
 
     for (key, value) in reexec_cost_per_contract {
         println!("{:?},{:?}", key, value);
     }
 
-    println!("\reexec_cost_per_transaction");
+    println!("\nreexec_cost_per_transaction");
     println!("key,value");
 
     for (key, value) in reexec_cost_per_transaction {
