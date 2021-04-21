@@ -1,7 +1,7 @@
 use crate::rpc;
 use crate::transaction_info::{Access, AccessMode, Target, TransactionInfo};
 use std::cmp::{min, Reverse};
-use std::collections::{BinaryHeap, HashMap, HashSet};
+use std::collections::{BinaryHeap, HashSet};
 use std::convert::TryFrom;
 use web3::types::{H160, H256, U256};
 
@@ -159,17 +159,12 @@ pub fn batches(txs: &Vec<TransactionInfo>, gas: &Vec<U256>, batch_size: usize) -
 pub fn thread_pool(
     txs: &Vec<TransactionInfo>,
     gas: &Vec<U256>,
-    info: &Vec<rpc::TxInfo>,
+    _info: &Vec<rpc::TxInfo>,
     num_threads: usize,
 
     allow_ignore_slots: bool,
     allow_avoid_conflicts_during_scheduling: bool,
     allow_read_from_uncommitted: bool,
-
-    reexec_cost_per_sender: &mut HashMap<H160, U256>,
-    reexec_cost_per_receiver: &mut HashMap<H160, U256>,
-    reexec_cost_per_contract: &mut HashMap<String, U256>,
-    reexec_cost_per_transaction: &mut HashMap<H256, U256>,
 ) -> U256 {
     assert_eq!(txs.len(), gas.len());
 
@@ -470,10 +465,6 @@ pub fn thread_pool(
                             log::trace!("[{}] wr conflict between tx-{} ({}) [committed] and tx-{} ({}) [to be committed], ABORT tx-{}", N, prev_tx, &txs[prev_tx].tx_hash[0..8], tx_id, &txs[tx_id].tx_hash[0..8], tx_id);
                             aborted = true;
 
-                            *reexec_cost_per_contract
-                                .entry(addr.to_owned())
-                                .or_insert(U256::from(0)) += gas[tx_id];
-
                             break 'outer;
                         }
                     }
@@ -494,19 +485,6 @@ pub fn thread_pool(
 
             // re-schedule aborted tx
             tx_queue.push(Reverse(tx_id));
-
-            // note re-execution costs
-            *reexec_cost_per_sender
-                .entry(info[tx_id].from)
-                .or_insert(U256::from(0)) += gas[tx_id];
-
-            *reexec_cost_per_receiver
-                .entry(info[tx_id].to.unwrap_or(H160::zero()))
-                .or_insert(U256::from(0)) += gas[tx_id];
-
-            *reexec_cost_per_transaction
-                .entry(info[tx_id].hash)
-                .or_insert(U256::from(0)) += gas[tx_id];
         }
 
         N += 1;
