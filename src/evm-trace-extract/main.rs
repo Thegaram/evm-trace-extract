@@ -17,7 +17,12 @@ async fn occ_detailed_stats(
     batch_size: usize,
     stream: impl BlockDataStream + Unpin,
 ) {
-    println!("block,num_txs,num_conflicts,serial_gas_cost,pool_t_2,pool_t_4,pool_t_8,pool_t_16,pool_t_all,optimal_t_2,optimal_t_4,optimal_t_8,optimal_t_16,optimal_t_all");
+    let mut reexec_cost_per_sender = Default::default();
+    let mut reexec_cost_per_receiver = Default::default();
+    let mut reexec_cost_per_contract = Default::default();
+    let mut reexec_cost_per_transaction = Default::default();
+
+    println!("block,num_txs,num_conflicts,serial_gas_cost,pool_t_2,pool_t_4,pool_t_8,pool_t_16,pool_t_32");
 
     let mut stream = stream.chunks(batch_size);
 
@@ -41,7 +46,7 @@ async fn occ_detailed_stats(
         let num_conflicts = occ::num_conflicts(&txs);
         let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
 
-        let occ = |num_threads| {
+        let mut occ = |num_threads| {
             occ::thread_pool(
                 &txs,
                 &gas,
@@ -50,10 +55,10 @@ async fn occ_detailed_stats(
                 false, // allow_ignore_slots
                 false, // allow_avoid_conflicts_during_scheduling
                 false, // allow_read_from_uncommitted
-                &mut Default::default(),
-                &mut Default::default(),
-                &mut Default::default(),
-                &mut Default::default(),
+                &mut reexec_cost_per_sender,
+                &mut reexec_cost_per_receiver,
+                &mut reexec_cost_per_contract,
+                &mut reexec_cost_per_transaction,
             )
         };
 
@@ -61,15 +66,7 @@ async fn occ_detailed_stats(
         let pool_t_4_q_0 = occ(4);
         let pool_t_8_q_0 = occ(8);
         let pool_t_16_q_0 = occ(16);
-        let pool_t_all_q_0 = occ(txs.len());
-
-        let graph = depgraph::DependencyGraph::simple(&txs, &info);
-
-        let optimal_t_2 = graph.cost(&gas, 2);
-        let optimal_t_4 = graph.cost(&gas, 4);
-        let optimal_t_8 = graph.cost(&gas, 8);
-        let optimal_t_16 = graph.cost(&gas, 16);
-        let optimal_t_all = graph.cost(&gas, txs.len());
+        let pool_t_32_q_0 = occ(32);
 
         let block = blocks
             .into_iter()
@@ -78,7 +75,7 @@ async fn occ_detailed_stats(
             .join("-");
 
         println!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{}",
             block,
             num_txs,
             num_conflicts,
@@ -87,14 +84,19 @@ async fn occ_detailed_stats(
             pool_t_4_q_0,
             pool_t_8_q_0,
             pool_t_16_q_0,
-            pool_t_all_q_0,
-            optimal_t_2,
-            optimal_t_4,
-            optimal_t_8,
-            optimal_t_16,
-            optimal_t_all,
+            pool_t_32_q_0,
+            // optimal_t_2,
+            // optimal_t_4,
+            // optimal_t_8,
+            // optimal_t_16,
+            // optimal_t_all,
         );
     }
+
+    println!("reexec_cost_per_sender: {}", serde_json::to_string(&reexec_cost_per_sender).unwrap());
+    println!("reexec_cost_per_receiver: {}", serde_json::to_string(&reexec_cost_per_receiver).unwrap());
+    println!("reexec_cost_per_contract: {}", serde_json::to_string(&reexec_cost_per_contract).unwrap());
+    println!("reexec_cost_per_transaction: {}", serde_json::to_string(&reexec_cost_per_transaction).unwrap());
 }
 
 #[allow(dead_code)]
