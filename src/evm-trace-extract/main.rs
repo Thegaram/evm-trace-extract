@@ -93,10 +93,33 @@ async fn occ_detailed_stats(
         );
     }
 
-    println!("reexec_cost_per_sender: {}", serde_json::to_string(&reexec_cost_per_sender).unwrap());
-    println!("reexec_cost_per_receiver: {}", serde_json::to_string(&reexec_cost_per_receiver).unwrap());
-    println!("reexec_cost_per_contract: {}", serde_json::to_string(&reexec_cost_per_contract).unwrap());
-    println!("reexec_cost_per_transaction: {}", serde_json::to_string(&reexec_cost_per_transaction).unwrap());
+    println!("\nreexec_cost_per_sender");
+    println!("key,value");
+
+    for (key, value) in reexec_cost_per_sender {
+        println!("{:?},{:?}", key, value);
+    }
+
+    println!("\reexec_cost_per_receiver");
+    println!("key,value");
+
+    for (key, value) in reexec_cost_per_receiver {
+        println!("{:?},{:?}", key, value);
+    }
+
+    println!("\reexec_cost_per_contract");
+    println!("key,value");
+
+    for (key, value) in reexec_cost_per_contract {
+        println!("{:?},{:?}", key, value);
+    }
+
+    println!("\reexec_cost_per_transaction");
+    println!("key,value");
+
+    for (key, value) in reexec_cost_per_transaction {
+        println!("{:?},{:?}", key, value);
+    }
 }
 
 #[allow(dead_code)]
