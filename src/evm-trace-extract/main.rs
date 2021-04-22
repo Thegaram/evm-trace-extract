@@ -131,7 +131,7 @@ fn stream_from_rpc(provider: &str, from: u64, to: u64) -> web3::Result<impl Bloc
 
 #[allow(dead_code)]
 fn stream_from_db(db_path: &str, from: u64, to: u64) -> impl BlockDataStream {
-    let rpc_db = db::RpcDb::open(db_path).expect("db open succeeds");
+    let rpc_db = db::RpcDb::open_for_read_only(db_path).expect("db open succeeds");
 
     let gas_and_infos = stream::iter(from..=to).map(move |block| {
         let gas = rpc_db
