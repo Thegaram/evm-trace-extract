@@ -13,7 +13,8 @@ pub fn open_traces(path: &str) -> DB {
     opts.create_if_missing(false);
     opts.set_prefix_extractor(prefix_extractor);
 
-    DB::open(&opts, path).expect("db open should succeed")
+    DB::open_for_read_only(&opts, path, /* error_if_log_file_exist: */ true)
+        .expect("db open should succeed")
 }
 
 // note: this will get tx infos in the wrong order!
@@ -82,6 +83,13 @@ impl RpcDb {
         let mut opts = Options::default();
         opts.create_if_missing(true);
         let db = DB::open(&opts, path)?;
+        Ok(RpcDb { db })
+    }
+
+    pub fn open_for_read_only(path: &str) -> Result<RpcDb, Error> {
+        let mut opts = Options::default();
+        opts.create_if_missing(true);
+        let db = DB::open_for_read_only(&opts, path, /* error_if_log_file_exist: */ true)?;
         Ok(RpcDb { db })
     }
 

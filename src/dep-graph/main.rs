@@ -83,7 +83,7 @@ fn find_longest(depends_on: &HashMap<usize, Vec<usize>>, gas: &Vec<U256>) -> (U2
 }
 
 async fn xxx(db: &DB, from: u64, to: u64) {
-    let rpc_db = db::RpcDb::open("./_rpc_db").expect("db open succeeds");
+    let rpc_db = db::RpcDb::open_for_read_only("./_rpc_db").expect("db open succeeds");
 
     println!("block;speedup_bound;bottleneck_chain;bottleneck_cost");
 
