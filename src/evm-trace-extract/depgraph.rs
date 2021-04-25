@@ -1,6 +1,6 @@
 use crate::rpc;
 use crate::transaction_info::{Access, AccessMode, Target, TransactionInfo};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, BinaryHeap};
 use web3::types::U256;
 
 fn is_wr_conflict(first: &TransactionInfo, second: &TransactionInfo) -> bool {
@@ -95,22 +95,15 @@ impl DependencyGraph {
         let mut threads: Vec<Option<(usize, U256)>> = vec![None; num_threads];
         let mut finished: HashSet<usize> = Default::default();
 
-        let is_executing = |tx0: &usize, threads: &Vec<Option<_>>| {
-            threads
-                .iter()
-                .filter_map(|opt| opt.map(|(tx1, _)| tx1))
-                .find(|tx1| tx1 == tx0)
-                .is_some()
-        };
-
-        let is_ready = |tx: &usize, finished: &HashSet<usize>| {
-            self.predecessors_of
-                .get(tx)
-                .unwrap_or(&vec![])
-                .iter()
-                .all(|tx0| finished.contains(tx0))
-        };
-
+        let mut ready_txns: BinaryHeap<(U256, usize)> = Default::default();
+        let mut num_pre: Vec<usize> = vec![0; num_txs];
+        for txn_id in 0..num_txs {
+            if self.predecessors_of.contains_key(&txn_id) {
+                num_pre[txn_id] = self.predecessors_of.get(&txn_id).unwrap_or(&vec![]).len();
+            } else {
+                ready_txns.push((max_cost_from[&txn_id], txn_id));
+            }
+        } 
         let mut cost = U256::from(0);
 
         loop {
@@ -118,7 +111,6 @@ impl DependencyGraph {
             if finished.len() == num_txs {
                 // all threads are idle
                 assert!(threads.iter().all(Option::is_none));
-
                 break;
             }
 
@@ -128,14 +120,8 @@ impl DependencyGraph {
                     continue;
                 }
 
-                let maybe_tx = (0..num_txs)
-                    .filter(|tx| !is_executing(tx, &threads))
-                    .filter(|tx| !finished.contains(tx))
-                    .filter(|tx| is_ready(tx, &finished))
-                    .max_by_key(|tx| max_cost_from[tx]);
-
-                let tx = match maybe_tx {
-                    Some(tx) => tx,
+                let (cur_max_cost_from, tx) = match ready_txns.pop() {
+                    Some((cur_max_cost_from, tx)) => (cur_max_cost_from, tx),
                     None => break,
                 };
 
@@ -156,6 +142,17 @@ impl DependencyGraph {
 
             threads[thread_id] = None;
             finished.insert(tx);
+            if self.successors_of.contains_key(&tx) {
+                let successors = self.successors_of.get(&tx).unwrap();
+                for i in 0..successors.len() {
+                    let suc_txn = successors[i];
+                    num_pre[suc_txn] -= 1;
+                    if num_pre[suc_txn] == 0 {
+                        ready_txns.push((max_cost_from[&suc_txn], suc_txn));
+                    }
+                }
+            }
+
             cost += gas_step;
 
             // update gas costs
