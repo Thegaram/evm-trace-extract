@@ -1,6 +1,6 @@
 use crate::rpc;
 use crate::transaction_info::{Access, AccessMode, Target, TransactionInfo};
-use std::collections::{HashMap, HashSet, BinaryHeap};
+use std::collections::{BinaryHeap, HashMap, HashSet};
 use web3::types::U256;
 
 fn is_wr_conflict(first: &TransactionInfo, second: &TransactionInfo) -> bool {
@@ -103,7 +103,7 @@ impl DependencyGraph {
             } else {
                 ready_txns.push((max_cost_from[&txn_id], txn_id));
             }
-        } 
+        }
         let mut cost = U256::from(0);
 
         loop {

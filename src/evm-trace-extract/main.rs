@@ -6,8 +6,8 @@ mod occ;
 use futures::{future, stream, FutureExt, StreamExt};
 use rocksdb::DB;
 use rustop::opts;
-use web3::types::U256;
 use std::time::SystemTime;
+use web3::types::U256;
 
 // define a "trait alias" (see https://www.worthe-it.co.za/blog/2017-01-15-aliasing-traits-in-rust.html)
 trait BlockDataStream: stream::Stream<Item = (u64, (Vec<U256>, Vec<rpc::TxInfo>))> {}
@@ -62,7 +62,7 @@ async fn occ_detailed_stats(
         let pool_t_all_q_0 = occ(txs.len());
 
         let graph = depgraph::DependencyGraph::simple(&txs, &info);
-        
+
         let optimal_t_2 = graph.cost(&gas, 2);
         let optimal_t_4 = graph.cost(&gas, 4);
         let optimal_t_8 = graph.cost(&gas, 8);
@@ -93,7 +93,10 @@ async fn occ_detailed_stats(
             optimal_t_all,
         );
     }
-    println!("Full Time = {} secs", start_time.elapsed().unwrap().as_secs());
+    println!(
+        "Full Time = {} secs",
+        start_time.elapsed().unwrap().as_secs()
+    );
 }
 
 #[allow(dead_code)]
