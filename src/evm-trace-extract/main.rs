@@ -6,7 +6,6 @@ mod occ;
 use futures::{future, stream, FutureExt, StreamExt};
 use rocksdb::DB;
 use rustop::opts;
-use std::time::SystemTime;
 use web3::types::U256;
 
 // define a "trait alias" (see https://www.worthe-it.co.za/blog/2017-01-15-aliasing-traits-in-rust.html)
@@ -18,7 +17,6 @@ async fn occ_detailed_stats(
     batch_size: usize,
     stream: impl BlockDataStream + Unpin,
 ) {
-    let start_time = SystemTime::now();
     println!("block,num_txs,num_conflicts,serial_gas_cost,pool_t_2,pool_t_4,pool_t_8,pool_t_16,pool_t_all,optimal_t_2,optimal_t_4,optimal_t_8,optimal_t_16,optimal_t_all");
 
     let mut stream = stream.chunks(batch_size);
@@ -93,10 +91,6 @@ async fn occ_detailed_stats(
             optimal_t_all,
         );
     }
-    println!(
-        "Full Time = {} secs",
-        start_time.elapsed().unwrap().as_secs()
-    );
 }
 
 #[allow(dead_code)]

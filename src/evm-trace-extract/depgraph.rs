@@ -97,6 +97,7 @@ impl DependencyGraph {
 
         let mut ready_txns: BinaryHeap<(U256, usize)> = Default::default();
         let mut num_pre: Vec<usize> = vec![0; num_txs];
+
         for txn_id in 0..num_txs {
             if self.predecessors_of.contains_key(&txn_id) {
                 num_pre[txn_id] = self.predecessors_of.get(&txn_id).unwrap_or(&vec![]).len();
@@ -104,6 +105,7 @@ impl DependencyGraph {
                 ready_txns.push((max_cost_from[&txn_id], txn_id));
             }
         }
+
         let mut cost = U256::from(0);
 
         loop {
@@ -120,7 +122,7 @@ impl DependencyGraph {
                     continue;
                 }
 
-                let (cur_max_cost_from, tx) = match ready_txns.pop() {
+                let (_cur_max_cost_from, tx) = match ready_txns.pop() {
                     Some((cur_max_cost_from, tx)) => (cur_max_cost_from, tx),
                     None => break,
                 };
@@ -142,14 +144,12 @@ impl DependencyGraph {
 
             threads[thread_id] = None;
             finished.insert(tx);
-            if self.successors_of.contains_key(&tx) {
-                let successors = self.successors_of.get(&tx).unwrap();
-                for i in 0..successors.len() {
-                    let suc_txn = successors[i];
-                    num_pre[suc_txn] -= 1;
-                    if num_pre[suc_txn] == 0 {
-                        ready_txns.push((max_cost_from[&suc_txn], suc_txn));
-                    }
+
+            for suc_txn in self.successors_of.get(&tx).cloned().unwrap_or(vec![]) {
+                num_pre[suc_txn] -= 1;
+
+                if num_pre[suc_txn] == 0 {
+                    ready_txns.push((max_cost_from[&suc_txn], suc_txn));
                 }
             }
 
