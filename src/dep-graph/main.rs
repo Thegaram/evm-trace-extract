@@ -8,11 +8,11 @@ use crate::transaction_info::{Access, AccessMode, Target, TransactionInfo};
 
 use futures::{stream, StreamExt};
 use rocksdb::DB;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::env;
 use web3::types::U256;
 
-fn is_wr_conflict(first: &TransactionInfo, second: &TransactionInfo) -> bool {
+fn is_wr_conflict<'a>(first: &TransactionInfo, second: &'a TransactionInfo) -> Option<(&'a String, &'a String)> {
     for acc in second
         .accesses
         .iter()
@@ -20,12 +20,12 @@ fn is_wr_conflict(first: &TransactionInfo, second: &TransactionInfo) -> bool {
     {
         if let Target::Storage(addr, entry) = &acc.target {
             if first.accesses.contains(&Access::storage_write(addr, entry)) {
-                return true;
+                return Some((addr, entry));
             }
         }
     }
 
-    false
+    None
 }
 
 fn find_longest_rec(
@@ -83,7 +83,7 @@ fn find_longest(depends_on: &HashMap<usize, Vec<usize>>, gas: &Vec<U256>) -> (U2
 }
 
 async fn xxx(db: &DB, from: u64, to: u64) {
-    let rpc_db = db::RpcDb::open_for_read_only("./_rpc_db").expect("db open succeeds");
+    let rpc_db = db::RpcDb::open_for_read_only("../experiment/db/_rpc_db/").expect("db open succeeds");
 
     println!("block;speedup_bound;bottleneck_chain;bottleneck_cost");
 
@@ -115,6 +115,7 @@ async fn xxx(db: &DB, from: u64, to: u64) {
         }
 
         let mut depends_on = HashMap::new();
+        let mut dependencies = HashMap::new();
 
         // for tx in 0..num_txs {
         //     println!("tx-{} ({}) gas: {}", tx, txs[tx].tx_hash, gas[tx]);
@@ -122,8 +123,9 @@ async fn xxx(db: &DB, from: u64, to: u64) {
 
         for first in 0..(num_txs - 1) {
             for second in (first + 1)..num_txs {
-                if is_wr_conflict(&txs[first], &txs[second]) {
+                if let Some((addr, entry)) = is_wr_conflict(&txs[first], &txs[second]) {
                     depends_on.entry(second).or_insert(vec![]).push(first);
+                    dependencies.entry((first, second)).or_insert((addr, entry));
                 }
             }
         }
@@ -135,7 +137,17 @@ async fn xxx(db: &DB, from: u64, to: u64) {
         // println!("speedup bound = {:?} (chain = {:?}, cost = {:?})", , chain, cost);
         let speedup_bound = (serial.as_u64() as f64) / (cost.as_u64() as f64);
 
-        println!("{:?};{:?};{:?};{:?}", block, speedup_bound, chain, cost);
+        let chain_hashes: Vec<_> = chain.iter().map(|id| txs[*id].tx_hash.clone()).collect();
+
+        let mut tx_dependencies = HashSet::new();
+
+        for ii in 0..chain.len().saturating_sub(1) {
+            if let Some(dep) = dependencies.get(&(chain[ii], chain[ii + 1])) {
+                tx_dependencies.insert(dep);
+            }
+        }
+
+        println!("{{ \"block\": {:?}, \"bound\": {:?}, \"bottleneck_chain\": {:?}, \"bottleneck_cost\": {:?}, \"dependencies\": {:?} }}", block, speedup_bound, chain_hashes, cost, tx_dependencies.into_iter().map(|(addr, entry)| format!("{}-{}", addr, entry)).collect::<Vec<_>>());
     }
 }
 
