@@ -1,1 +1,2 @@
 nohup ../target/release/dep-graph ~/evm/openethereum/experiment/_test_db 5431999 5692235 > 2021-08-04-bottleneck-in-blocks-5431999-5692235 2>&1 &
+nohup ../target/release/dep-graph ~/evm/openethereum/experiment/_test_db 5431999 5692235 > 2021-08-04-bottleneck-in-blocks-5431999-5692235-in-batches-of-30 2>&1 &

@@ -102,17 +102,39 @@ async fn xxx(db: &DB, from: u64, to: u64) {
     });
 
     let blocks = stream::iter(from..=to);
-    let mut it = blocks.zip(others);
+    let it = blocks.zip(others);
 
-    while let Some((block, (gas, info))) = it.next().await {
-        let txs = db::tx_infos(&db, block, &info);
+    // while let Some((block, (gas, info))) = it.next().await {
+    //     let txs = db::tx_infos(&db, block, &info);
+
+    let chunk_size = 30;
+    let mut it = it.chunks(chunk_size);
+
+    while let Some(chunk) = it.next().await {
+        let mut blocks = vec![];
+        let mut txs = vec![];
+        let mut gas = vec![];
+        let mut info = vec![];
+
+        for (block, (chunk_gas, chunk_info)) in chunk {
+            blocks.push(block);
+            txs.extend(db::tx_infos(&db, block, &chunk_info).into_iter());
+            gas.extend(chunk_gas.into_iter());
+            info.extend(chunk_info.into_iter());
+        }
+
+        let block = blocks
+            .into_iter()
+            .map(|b| b.to_string())
+            .collect::<Vec<String>>()
+            .join("-");
 
         let num_txs = txs.len();
 
-        if num_txs == 0 {
-            println!("{:?};{:?};{:?};{:?}", block, 0, Vec::<usize>::new(), 0);
-            continue;
-        }
+        // if num_txs == 0 {
+        //     println!("{:?};{:?};{:?};{:?}", block, 0, Vec::<usize>::new(), 0);
+        //     continue;
+        // }
 
         let mut depends_on = HashMap::new();
         let mut dependencies = HashMap::new();
@@ -121,7 +143,7 @@ async fn xxx(db: &DB, from: u64, to: u64) {
         //     println!("tx-{} ({}) gas: {}", tx, txs[tx].tx_hash, gas[tx]);
         // }
 
-        for first in 0..(num_txs - 1) {
+        for first in 0..num_txs.saturating_sub(1) {
             for second in (first + 1)..num_txs {
                 if let Some((addr, entry)) = is_wr_conflict(&txs[first], &txs[second]) {
                     depends_on.entry(second).or_insert(vec![]).push(first);
