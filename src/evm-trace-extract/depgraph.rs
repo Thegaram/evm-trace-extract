@@ -42,8 +42,7 @@ impl DependencyGraph {
 
         for first in 0..(txs.len().saturating_sub(1)) {
             for second in (first + 1)..txs.len() {
-                if info[first].from.to_low_u64_be() % counter_len
-                    != info[second].from.to_low_u64_be() % counter_len
+                if true
                 {
                     continue;
                 }
