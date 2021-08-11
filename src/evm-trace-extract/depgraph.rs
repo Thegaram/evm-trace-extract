@@ -26,6 +26,13 @@ pub struct DependencyGraph {
 }
 
 impl DependencyGraph {
+    pub fn no_deps() -> DependencyGraph {
+        DependencyGraph {
+            predecessors_of: Default::default(),
+            successors_of: Default::default(),
+        }
+    }
+
     pub fn simple(txs: &Vec<TransactionInfo>, info: &Vec<rpc::TxInfo>) -> DependencyGraph {
         DependencyGraph::with_sharding(txs, info, 1)
     }
@@ -42,10 +49,19 @@ impl DependencyGraph {
 
         for first in 0..(txs.len().saturating_sub(1)) {
             for second in (first + 1)..txs.len() {
-                if true
-                {
+                // if info[first].from.to_low_u64_be() % counter_len
+                //     != info[second].from.to_low_u64_be() % counter_len
+                // {
+                //     continue;
+                // }
+
+                let last_two: Vec<char> = txs[first].tx_hash.chars().rev().take(2).collect();
+                let number = u64::from_str_radix(&format!("{}{}", last_two[1], last_two[0])[..], 16).unwrap();
+
+                if number % (counter_len * counter_len) != 0 {
                     continue;
                 }
+
                 if is_wr_conflict(&txs[first], &txs[second]) {
                     predecessors_of.entry(second).or_insert(vec![]).push(first);
                     successors_of.entry(first).or_insert(vec![]).push(second);
