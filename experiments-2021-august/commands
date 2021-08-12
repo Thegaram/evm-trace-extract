@@ -1,0 +1,1 @@
+nohup ../target/release/evm-trace-extract --traces ~/evm/openethereum/experiment/_test_db --rpc-db ~/evm/evm-trace-extract/experiment/db/_rpc_db --from 5431999 --to 5692235 --batch-size 1 > 2021-08-11-deterministic-scheduling-batch-of-1.csv 2>&1 &
