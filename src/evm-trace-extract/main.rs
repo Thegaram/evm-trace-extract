@@ -18,7 +18,7 @@ async fn occ_detailed_stats(
     stream: impl BlockDataStream + Unpin,
 ) {
     println!(
-        "block,num_txs,num_conflicts,serial_gas_cost,optimal_t_32_no_deps,optimal_t_32_counter_1,optimal_t_32_counter_10,optimal_t_32_counter_30"
+        "block,num_txs,num_conflicts,serial_gas_cost,optimal_t_32_counter_1,optimal_t_32_counter_2,optimal_t_32_counter_3,optimal_t_32_counter_4,optimal_t_32_no_deps"
     );
 
     let mut stream = stream.chunks(batch_size);
@@ -43,17 +43,20 @@ async fn occ_detailed_stats(
         let num_conflicts = occ::num_conflicts(&txs);
         let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
 
-        let graph = depgraph::DependencyGraph::no_deps();
-        let optimal_t_32_no_deps = graph.cost(&gas, 32);
-
         let graph = depgraph::DependencyGraph::simple(&txs, &info);
         let optimal_t_32_counter_1 = graph.cost(&gas, 32);
 
-        let graph = depgraph::DependencyGraph::with_sharding(&txs, &info, 10);
-        let optimal_t_32_counter_10 = graph.cost(&gas, 32);
+        let graph = depgraph::DependencyGraph::with_sharding(&txs, &info, 2);
+        let optimal_t_32_counter_2 = graph.cost(&gas, 32);
 
-        let graph = depgraph::DependencyGraph::with_sharding(&txs, &info, 30);
-        let optimal_t_32_counter_30 = graph.cost(&gas, 32);
+        let graph = depgraph::DependencyGraph::with_sharding(&txs, &info, 3);
+        let optimal_t_32_counter_3 = graph.cost(&gas, 32);
+
+        let graph = depgraph::DependencyGraph::with_sharding(&txs, &info, 4);
+        let optimal_t_32_counter_4 = graph.cost(&gas, 32);
+
+        let graph = depgraph::DependencyGraph::no_deps();
+        let optimal_t_32_no_deps = graph.cost(&gas, 32);
 
         let block = blocks
             .into_iter()
@@ -62,15 +65,16 @@ async fn occ_detailed_stats(
             .join("-");
 
         println!(
-            "{},{},{},{},{},{},{},{}",
+            "{},{},{},{},{},{},{},{},{}",
             block,
             num_txs,
             num_conflicts,
             serial,
-            optimal_t_32_no_deps,
             optimal_t_32_counter_1,
-            optimal_t_32_counter_10,
-            optimal_t_32_counter_30,
+            optimal_t_32_counter_2,
+            optimal_t_32_counter_3,
+            optimal_t_32_counter_4,
+            optimal_t_32_no_deps,
         );
     }
 }
