@@ -7,89 +7,89 @@ use futures::{future, stream, FutureExt, StreamExt};
 use rocksdb::DB;
 use rustop::opts;
 use web3::types::U256;
+use serde::{Deserialize, Serialize};
+use crate::transaction_info::TransactionInfo;
 
 // define a "trait alias" (see https://www.worthe-it.co.za/blog/2017-01-15-aliasing-traits-in-rust.html)
 trait BlockDataStream: stream::Stream<Item = (u64, (Vec<U256>, Vec<rpc::TxInfo>))> {}
 impl<T> BlockDataStream for T where T: stream::Stream<Item = (u64, (Vec<U256>, Vec<rpc::TxInfo>))> {}
 
+#[derive(Deserialize, Serialize)]
+pub struct BlockOutput {
+    pub block_number: u64,
+    pub transactions: Vec<TransactionInfo>,
+}
+
 async fn occ_detailed_stats(
     trace_db: &DB,
     batch_size: usize,
-    stream: impl BlockDataStream + Unpin,
+    mut stream: impl BlockDataStream + Unpin,
 ) {
-    println!("block,num_txs,num_conflicts,serial_gas_cost,pool_t_2,pool_t_4,pool_t_8,pool_t_16,pool_t_all,optimal_t_2,optimal_t_4,optimal_t_8,optimal_t_16,optimal_t_all");
+    // println!("block,num_txs,num_conflicts,serial_gas_cost,pool_t_2,pool_t_4,pool_t_8,pool_t_16,pool_t_all,optimal_t_2,optimal_t_4,optimal_t_8,optimal_t_16,optimal_t_all");
 
-    let mut stream = stream.chunks(batch_size);
 
-    while let Some(batch) = stream.next().await {
-        let mut blocks = vec![];
-        let mut txs = vec![];
-        let mut gas = vec![];
-        let mut info = vec![];
+    while let Some((block, (_batch_gas, batch_info))) = stream.next().await {
 
-        for (block, (batch_gas, batch_info)) in batch {
-            blocks.push(block);
-            txs.extend(db::tx_infos(&trace_db, block, &batch_info).into_iter());
-            gas.extend(batch_gas.into_iter());
-            info.extend(batch_info.into_iter());
-        }
-
-        assert_eq!(txs.len(), gas.len());
-        assert_eq!(txs.len(), info.len());
-
-        let num_txs = txs.len();
-        let num_conflicts = occ::num_conflicts(&txs);
-        let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
-
-        let occ = |num_threads| {
-            occ::thread_pool(
-                &txs,
-                &gas,
-                &info,
-                num_threads,
-                false, // allow_ignore_slots
-                false, // allow_avoid_conflicts_during_scheduling
-                false, // allow_read_from_uncommitted
-            )
+        let obj = BlockOutput {
+            block_number: block,
+            transactions: db::tx_infos(&trace_db, block, &batch_info),
         };
 
-        let pool_t_2_q_0 = occ(2);
-        let pool_t_4_q_0 = occ(4);
-        let pool_t_8_q_0 = occ(8);
-        let pool_t_16_q_0 = occ(16);
-        let pool_t_all_q_0 = occ(txs.len());
+        println!("{}", serde_json::to_string(&obj).unwrap());
 
-        let graph = depgraph::DependencyGraph::simple(&txs, &info);
+    //     let num_txs = txs.len();
+    //     let num_conflicts = occ::num_conflicts(&txs);
+    //     let serial = gas.iter().fold(U256::from(0), |acc, item| acc + item);
 
-        let optimal_t_2 = graph.cost(&gas, 2);
-        let optimal_t_4 = graph.cost(&gas, 4);
-        let optimal_t_8 = graph.cost(&gas, 8);
-        let optimal_t_16 = graph.cost(&gas, 16);
-        let optimal_t_all = graph.cost(&gas, txs.len());
+    //     let occ = |num_threads| {
+    //         occ::thread_pool(
+    //             &txs,
+    //             &gas,
+    //             &info,
+    //             num_threads,
+    //             false, // allow_ignore_slots
+    //             false, // allow_avoid_conflicts_during_scheduling
+    //             false, // allow_read_from_uncommitted
+    //         )
+    //     };
 
-        let block = blocks
-            .into_iter()
-            .map(|b| b.to_string())
-            .collect::<Vec<String>>()
-            .join("-");
+    //     let pool_t_2_q_0 = occ(2);
+    //     let pool_t_4_q_0 = occ(4);
+    //     let pool_t_8_q_0 = occ(8);
+    //     let pool_t_16_q_0 = occ(16);
+    //     let pool_t_all_q_0 = occ(txs.len());
 
-        println!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
-            block,
-            num_txs,
-            num_conflicts,
-            serial,
-            pool_t_2_q_0,
-            pool_t_4_q_0,
-            pool_t_8_q_0,
-            pool_t_16_q_0,
-            pool_t_all_q_0,
-            optimal_t_2,
-            optimal_t_4,
-            optimal_t_8,
-            optimal_t_16,
-            optimal_t_all,
-        );
+    //     let graph = depgraph::DependencyGraph::simple(&txs, &info);
+
+    //     let optimal_t_2 = graph.cost(&gas, 2);
+    //     let optimal_t_4 = graph.cost(&gas, 4);
+    //     let optimal_t_8 = graph.cost(&gas, 8);
+    //     let optimal_t_16 = graph.cost(&gas, 16);
+    //     let optimal_t_all = graph.cost(&gas, txs.len());
+
+    //     let block = blocks
+    //         .into_iter()
+    //         .map(|b| b.to_string())
+    //         .collect::<Vec<String>>()
+    //         .join("-");
+
+    //     println!(
+    //         "{},{},{},{},{},{},{},{},{},{},{},{},{},{}",
+    //         block,
+    //         num_txs,
+    //         num_conflicts,
+    //         serial,
+    //         pool_t_2_q_0,
+    //         pool_t_4_q_0,
+    //         pool_t_8_q_0,
+    //         pool_t_16_q_0,
+    //         pool_t_all_q_0,
+    //         optimal_t_2,
+    //         optimal_t_4,
+    //         optimal_t_8,
+    //         optimal_t_16,
+    //         optimal_t_all,
+    //     );
     }
 }
 

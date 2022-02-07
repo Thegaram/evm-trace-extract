@@ -1,24 +1,25 @@
 use regex::Regex;
 use std::collections::HashSet;
+use serde::{Deserialize, Serialize};
 
 lazy_static! {
     static ref RE: Regex =
         Regex::new(r"^.*?-(?P<hash>0x[a-fA-F0-9]+)$",).expect("Regex RE is correct");
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub enum Target {
     Balance(String),
     Storage(String, String),
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub enum AccessMode {
     Read,
     Write,
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
 pub struct Access {
     pub target: Target,
     pub mode: AccessMode,
@@ -56,7 +57,7 @@ impl Access {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct TransactionInfo {
     pub tx_hash: String,
     pub accesses: HashSet<Access>,
